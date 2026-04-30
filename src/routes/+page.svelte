@@ -15,7 +15,7 @@
 	<section class="modes">
 		<a class="mode" href="/host">
 			<h2>📺 Host on TV</h2>
-			<p>Open this on the TV. Get a 4-digit room code. Friends upload photos from their phones.</p>
+			<p>Open this on the TV. Get a 6-digit room code. Friends upload photos from their phones.</p>
 		</a>
 
 		<a class="mode" href="/upload">

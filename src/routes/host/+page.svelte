@@ -32,16 +32,33 @@
 			console.warn('list failed', error);
 			return;
 		}
-		for (const f of data ?? []) addFile(f.name);
-	}
+		for (const f of data ?? []) await addFile(f.name);
+		}
 
-	function addFile(name: string) {
-		const path = `${roomFolder(code)}/${name}`;
-		if (seen.has(path)) return;
-		seen.add(path);
-		const supa = getSupabase();
-		const { data } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
-		queue = [...queue, { name, url: data.publicUrl }];
+	async function addFile(name: string) {
+	 	const path = `${roomFolder(code)}/${name}`;
+	 	if (seen.has(path)) return;
+	 	seen.add(path);
+	 	const supa = getSupabase();
+	 	const { data } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+
+	 	// special-case a youtube text file uploaded from the phone
+	 	if (name === 'youtube.txt') {
+	 		try {
+	 			const res = await fetch(data.publicUrl);
+	 			const txt = (await res.text()).trim();
+	 			const id = extractVideoId(txt);
+	 			if (id) {
+	 				videoId = id;
+	 				youtubeStatus = `Loaded from phone: ${id}`;
+	 			}
+	 		} catch (e) {
+	 			console.warn('failed to fetch youtube file', e);
+	 		}
+	 		return;
+	 	}
+
+	 	queue = [...queue, { name, url: data.publicUrl }];
 	}
 
 	function startPolling() {
@@ -136,7 +153,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="host" bind:this={containerEl}>
+<div class="host" bind:this={containerEl} class:light={started}>
 	{#if !started}
 		<div class="lobby">
 			<h1>Room <span class="code">{code}</span></h1>
@@ -211,6 +228,11 @@
 		inset: 0;
 		background: #000;
 	}
+
+	.host.light {
+		background: #fff;
+		color: #000;
+	}
 	.lobby {
 		position: absolute;
 		inset: 0;
@@ -219,7 +241,7 @@
 		align-items: center;
 		justify-content: center;
 		gap: 1rem;
-		padding: 2rem;
+		padding: 4rem;
 		text-align: center;
 	}
 	.lobby h1 {
@@ -264,6 +286,12 @@
 		padding: 0.5rem;
 		border-radius: 4px;
 	}
+
+	.host.light .audio-box input {
+		background: #fff;
+		border: 1px solid #ddd;
+		color: #000;
+	}
 	button {
 		padding: 0.6rem 1.2rem;
 		border: 1px solid #444;
@@ -302,6 +330,15 @@
 		max-width: 100%;
 		max-height: 100%;
 		object-fit: contain;
+	}
+
+	.host.light .slide {
+		background: #fff;
+	}
+
+	.host.light .slide img {
+		max-width: 80%;
+		max-height: 80%;
 	}
 	.yt {
 		position: absolute;

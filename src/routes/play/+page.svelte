@@ -10,6 +10,7 @@
 	let slides = $state<Slide[]>([]);
 	let urlMap = new Map<string, string>();
 	let audioUrl = $state<string | undefined>(undefined);
+	let videoId = $state<string | undefined>(undefined);
 
 	let currentIndex = $state(0);
 	let nextIndex = $state<number | null>(null);
@@ -44,7 +45,13 @@
 		settings = data.settings;
 		slides = buildSlides(photos, settings.defaultDuration, settings.pairPortraits);
 		if (audio) {
-			audioUrl = URL.createObjectURL(audio.blob);
+			if (audio.source === 'youtube' && audio.youtubeUrl) {
+				// extract video id from saved youtube link
+				const m = audio.youtubeUrl.match(/[?&]v=([^&]+)/);
+				videoId = m ? m[1] : audio.youtubeUrl;
+			} else if (audio.blob) {
+				audioUrl = URL.createObjectURL(audio.blob);
+			}
 		}
 	});
 
@@ -146,7 +153,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="player" bind:this={containerEl}>
+<div class="player" bind:this={containerEl} class:light={started}>
 	{#if error}
 		<div class="overlay">
 			<p>{error}</p>
@@ -186,6 +193,10 @@
 	{#if audioUrl}
 		<audio bind:this={audioEl} src={audioUrl} loop preload="auto"></audio>
 	{/if}
+
+	{#if videoId}
+		<iframe class="yt" src={`https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&rel=0`} title="background music" allow="autoplay; encrypted-media" frameborder="0"></iframe>
+	{/if}
 </div>
 
 <style>
@@ -200,6 +211,11 @@
 		inset: 0;
 		background: #000;
 		cursor: none;
+	}
+
+	.player.light {
+		background: #fff;
+		color: #000;
 	}
 	.overlay {
 		position: absolute;
@@ -249,6 +265,11 @@
 		max-width: 100%;
 		max-height: 100%;
 		object-fit: contain;
+	}
+
+	.player.light .slide img {
+		max-width: 80%;
+		max-height: 80%;
 	}
 	.pair {
 		display: flex;

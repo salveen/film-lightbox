@@ -6,6 +6,7 @@
 		deletePhoto,
 		loadProject,
 		saveAudio,
+		saveYouTubeLink,
 		saveOrder,
 		saveSettings,
 		setPhotoDuration,
@@ -22,6 +23,8 @@
 	let dragId = $state<string | null>(null);
 	let audioUrl = $state<string | undefined>(undefined);
 	let importing = $state(false);
+	let youtubeInput = $state('');
+	let ytStatus = $state<string | undefined>(undefined);
 
 	const thumbCache = new Map<string, string>();
 	function thumb(p: PhotoRecord): string {
@@ -67,6 +70,20 @@
 		audio = rec;
 		if (audioUrl) URL.revokeObjectURL(audioUrl);
 		audioUrl = URL.createObjectURL(rec.blob);
+	}
+
+	async function sendYouTubeToLocal(files?: FileList | null) {
+		if (!youtubeInput) return (ytStatus = 'Enter a YouTube link');
+		importing = true;
+		try {
+			const rec = await saveYouTubeLink(youtubeInput);
+			audio = rec as any;
+			ytStatus = 'Saved';
+		} catch (e) {
+			ytStatus = e instanceof Error ? e.message : String(e);
+		} finally {
+			importing = false;
+		}
 	}
 
 	async function removeAudio() {
@@ -184,6 +201,17 @@
 				/>
 				<span>Upload audio file</span>
 			</label>
+
+			<div class="youtube-send">
+				<label>
+					Play YouTube link locally
+					<input type="url" placeholder="https://www.youtube.com/watch?v=…" bind:value={youtubeInput} />
+				</label>
+				<button onclick={sendYouTubeToLocal} disabled={!youtubeInput || importing}>Save YouTube</button>
+				{#if ytStatus}
+					<p class="muted small">{ytStatus}</p>
+				{/if}
+			</div>
 
 			{#if audio}
 				<div class="audio-info">

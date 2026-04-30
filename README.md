@@ -2,7 +2,7 @@
 
 A photo + music slideshow you can play on your TV. Three modes:
 
-- **Host on TV** — TV shows a 4-digit room code, friends upload photos from their phones, slideshow plays.
+- **Host on TV** — TV shows a 6-digit room code, friends upload photos from their phones, slideshow plays.
 - **Upload from phone** — enter code, pick photos, they appear on the TV.
 - **Solo (offline)** — one device, photos stay in IndexedDB, no backend needed. Works zero-config.
 
@@ -13,7 +13,7 @@ pnpm install
 pnpm dev
 ```
 
-Solo mode works immediately. Host/Upload modes need Supabase env vars. YouTube extraction needs `yt-dlp` installed locally.
+Solo mode works immediately. Host/Upload modes need Supabase env vars. You can also supply a YouTube link from a phone; server-side extraction with `yt-dlp` is optional.
 
 ## Setup (Host/Upload modes)
 
@@ -34,17 +34,7 @@ Fill in:
 
 - `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `PUBLIC_SUPABASE_BUCKET=rooms`
 - `SUPABASE_SERVICE_ROLE_KEY` (only used by the cleanup endpoint, server-only)
-- `YT_DLP_BIN` (default `yt-dlp`; override if installed elsewhere)
-
-### 3. yt-dlp (for YouTube audio)
-
-```sh
-brew install yt-dlp        # macOS
-# or
-pipx install yt-dlp        # cross-platform
-```
-
-**Heads-up:** YouTube aggressively blocks datacenter IPs. yt-dlp from Railway/Fly/Vercel often returns "Sign in to confirm you're not a bot." Local dev usually works; production may need cookie injection or rotating user-agents.
+<!-- yt-dlp is optional; phone-sent YouTube links are supported -->
 
 ### 4. Cleanup (optional)
 
@@ -74,6 +64,6 @@ Uses `@sveltejs/adapter-node` so it deploys anywhere with Node 20+. The `/api/au
 
 ## Limitations
 
-- Anyone who guesses a 4-digit code can read/write to that room. Acceptable for short-lived parties; not for sensitive media.
+- Anyone who guesses a 6-digit code can read/write to that room. Acceptable for short-lived parties; not for sensitive media.
 - YouTube stream URLs from `yt-dlp -g` expire after a few hours.
 - Beat-sync requires a local audio file (Web Audio can't analyze a YouTube stream cross-origin).

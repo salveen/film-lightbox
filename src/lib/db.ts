@@ -14,10 +14,11 @@ export interface PhotoRecord {
 
 export interface AudioRecord {
 	id: 'current';
-	blob: Blob;
+	// blob is present for uploaded audio; for YouTube source it may be undefined
+	blob?: Blob;
 	source: 'upload' | 'youtube';
 	youtubeUrl?: string;
-	mimeType: string;
+	mimeType?: string;
 	durationSec?: number;
 }
 
@@ -174,6 +175,17 @@ export async function saveAudio(blob: Blob, source: 'upload' | 'youtube', youtub
 		source,
 		youtubeUrl,
 		mimeType: blob.type || 'audio/mpeg'
+	};
+	await db.put('audio', record);
+	return record;
+}
+
+export async function saveYouTubeLink(url: string) {
+	const db = await getDB();
+	const record: AudioRecord = {
+		id: 'current',
+		source: 'youtube',
+		youtubeUrl: url
 	};
 	await db.put('audio', record);
 	return record;

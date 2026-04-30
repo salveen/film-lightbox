@@ -10,6 +10,7 @@
 	let joined = $state(false);
 	let uploads = $state<UploadEntry[]>([]);
 	let globalError = $state<string | undefined>(undefined);
+	
 
 	function join() {
 		if (!isValidCode(code)) return;
@@ -64,13 +65,13 @@
 <main>
 	{#if !joined}
 		<h1>Join a room</h1>
-		<p class="muted">Enter the 4-digit code shown on the TV.</p>
+		<p class="muted">Enter the 6-digit code shown on the TV.</p>
 		<input
 			type="tel"
 			inputmode="numeric"
-			maxlength="4"
-			pattern="\d{4}"
-			placeholder="0000"
+			maxlength="6"
+			pattern="\d{6}"
+			placeholder="000000"
 			bind:value={code}
 			class="code-input"
 		/>
@@ -94,6 +95,8 @@
 		{#if globalError}
 			<p class="global-error">⚠ {globalError}</p>
 		{/if}
+
+		
 
 		<ul class="uploads">
 			{#each uploads as u, i (i)}
