@@ -24,8 +24,6 @@ export interface AudioRecord {
 export interface ProjectSettings {
 	defaultDuration: number;
 	transitionMs: number;
-	beatSync: boolean;
-	minDwellMs: number;
 	pairPortraits: boolean;
 }
 
@@ -44,8 +42,6 @@ interface FilmLightboxDB extends DBSchema {
 export const DEFAULT_SETTINGS: ProjectSettings = {
 	defaultDuration: 4,
 	transitionMs: 800,
-	beatSync: false,
-	minDwellMs: 1500,
 	pairPortraits: true
 };
 

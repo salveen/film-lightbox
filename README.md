@@ -1,42 +1,79 @@
-# sv
+# Film Lightbox
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+A photo + music slideshow you can play on your TV. Three modes:
 
-## Creating a project
+- **Host on TV** — TV shows a 4-digit room code, friends upload photos from their phones, slideshow plays.
+- **Upload from phone** — enter code, pick photos, they appear on the TV.
+- **Solo (offline)** — one device, photos stay in IndexedDB, no backend needed. Works zero-config.
 
-If you're seeing this, you've probably already done this step. Congrats!
-
-```sh
-# create a new project
-npx sv create my-app
-```
-
-To recreate this project with the same configuration:
+## Develop
 
 ```sh
-# recreate this project
-pnpm dlx sv@0.15.2 create --template minimal --types ts --install pnpm .
+pnpm install
+pnpm dev
 ```
 
-## Developing
+Solo mode works immediately. Host/Upload modes need Supabase env vars. YouTube extraction needs `yt-dlp` installed locally.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Setup (Host/Upload modes)
+
+### 1. Supabase
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. Storage → New bucket → name it `rooms` → make it **public**.
+3. Storage → Policies → on the `rooms` bucket, add a policy allowing `INSERT` and `SELECT` for the `anon` role. Easiest path: enable the bundled "Allow public read+write" template, or add a policy `bucket_id = 'rooms'` for both operations.
+4. Project Settings → API → copy the URL, anon key, and service-role key.
+
+### 2. Environment
 
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+cp .env.example .env
 ```
 
-## Building
+Fill in:
 
-To create a production version of your app:
+- `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `PUBLIC_SUPABASE_BUCKET=rooms`
+- `SUPABASE_SERVICE_ROLE_KEY` (only used by the cleanup endpoint, server-only)
+- `YT_DLP_BIN` (default `yt-dlp`; override if installed elsewhere)
+
+### 3. yt-dlp (for YouTube audio)
 
 ```sh
-npm run build
+brew install yt-dlp        # macOS
+# or
+pipx install yt-dlp        # cross-platform
 ```
 
-You can preview the production build with `npm run preview`.
+**Heads-up:** YouTube aggressively blocks datacenter IPs. yt-dlp from Railway/Fly/Vercel often returns "Sign in to confirm you're not a bot." Local dev usually works; production may need cookie injection or rotating user-agents.
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+### 4. Cleanup (optional)
+
+`POST /api/cleanup` deletes objects in the `rooms` bucket older than `ROOM_TTL_HOURS` (default 24). Wire it up to a cron — Supabase scheduled function, GitHub Actions, or a fly.io cron.
+
+## Build & deploy
+
+```sh
+pnpm build
+node build
+```
+
+Uses `@sveltejs/adapter-node` so it deploys anywhere with Node 20+. The `/api/audio` endpoint requires `yt-dlp` on the host. Recommended hosts:
+
+- **Fly.io** — has a free-ish allowance, supports custom Dockerfiles for installing yt-dlp.
+- **Railway** — easy to deploy, ~$5/mo minimum.
+- **Vercel** — possible but yt-dlp on serverless is fragile.
+
+## Architecture
+
+- `src/routes/host/` — TV page, generates room code, polls Supabase Storage for new uploads, plays slideshow with triple-buffer (only ~3 images decoded at a time so weak TV browsers don't OOM).
+- `src/routes/upload/` — phone page, client-side resize to 1920×1080 JPEG via canvas, upload to `room_<code>/` folder.
+- `src/routes/solo/` — IndexedDB-only editor (no backend).
+- `src/routes/play/` — solo fullscreen player with crossfade, paired-portrait layout, beat sync.
+- `src/routes/api/audio/` — `POST { url }` → spawns `yt-dlp -g` → returns direct audio stream URL.
+- `src/routes/api/cleanup/` — deletes stale room folders.
+
+## Limitations
+
+- Anyone who guesses a 4-digit code can read/write to that room. Acceptable for short-lived parties; not for sensitive media.
+- YouTube stream URLs from `yt-dlp -g` expire after a few hours.
+- Beat-sync requires a local audio file (Web Audio can't analyze a YouTube stream cross-origin).

@@ -3,7 +3,6 @@
 	import { goto } from '$app/navigation';
 	import { loadProject, type AudioRecord, type PhotoRecord, type ProjectSettings } from '$lib/db';
 	import { buildSlides, type Slide } from '$lib/slides';
-	import { detectBeats } from '$lib/beats';
 
 	let photos: PhotoRecord[] = [];
 	let audio = $state<AudioRecord | undefined>(undefined);
@@ -22,12 +21,9 @@
 	let audioEl: HTMLAudioElement | undefined = $state();
 	let containerEl: HTMLDivElement | undefined = $state();
 
-	let beats: number[] = [];
 	let rafId: number | null = null;
 	let slideStartedAt = 0;
-	let slideStartAudioTime = 0;
 	let transitionStartedAt: number | null = null;
-	let nextBeatIndex = 0;
 
 	function urlFor(p: PhotoRecord): string {
 		const cached = urlMap.get(p.id);
@@ -49,14 +45,6 @@
 		slides = buildSlides(photos, settings.defaultDuration, settings.pairPortraits);
 		if (audio) {
 			audioUrl = URL.createObjectURL(audio.blob);
-			if (settings.beatSync) {
-				try {
-					beats = await detectBeats(audio.blob);
-				} catch (e) {
-					console.warn('Beat detection failed', e);
-					beats = [];
-				}
-			}
 		}
 	});
 
@@ -69,8 +57,6 @@
 	async function start() {
 		started = true;
 		slideStartedAt = performance.now();
-		slideStartAudioTime = 0;
-		nextBeatIndex = 0;
 		if (audioEl) {
 			try {
 				await audioEl.play();
@@ -96,32 +82,9 @@
 		const slide = slides[currentIndex];
 		const transitionMs = settings.transitionMs;
 
-		const beatSyncActive = settings.beatSync && beats.length > 0 && audioEl;
-		let shouldStartTransition = false;
-
 		if (transitionStartedAt === null) {
-			if (beatSyncActive) {
-				const audioTime = audioEl!.currentTime;
-				while (nextBeatIndex < beats.length && beats[nextBeatIndex] <= slideStartAudioTime) {
-					nextBeatIndex++;
-				}
-				const minDwellSec = settings.minDwellMs / 1000;
-				const elapsedAudio = audioTime - slideStartAudioTime;
-				if (
-					elapsedAudio >= minDwellSec &&
-					nextBeatIndex < beats.length &&
-					audioTime >= beats[nextBeatIndex]
-				) {
-					shouldStartTransition = true;
-				}
-			} else {
-				if (now - slideStartedAt >= slide.duration * 1000) {
-					shouldStartTransition = true;
-				}
-			}
-			if (shouldStartTransition) {
-				const ni = (currentIndex + 1) % slides.length;
-				nextIndex = ni;
+			if (now - slideStartedAt >= slide.duration * 1000) {
+				nextIndex = (currentIndex + 1) % slides.length;
 				transitionStartedAt = now;
 			}
 		} else {
@@ -132,8 +95,6 @@
 				transitionStartedAt = null;
 				transitionProgress = 0;
 				slideStartedAt = now;
-				slideStartAudioTime = audioEl?.currentTime ?? 0;
-				if (beatSyncActive) nextBeatIndex++;
 			} else {
 				transitionProgress = t;
 			}
@@ -154,7 +115,6 @@
 		transitionStartedAt = null;
 		transitionProgress = 0;
 		slideStartedAt = performance.now();
-		slideStartAudioTime = audioEl?.currentTime ?? 0;
 	}
 	function prevSlide() {
 		if (slides.length === 0) return;
@@ -163,7 +123,6 @@
 		transitionStartedAt = null;
 		transitionProgress = 0;
 		slideStartedAt = performance.now();
-		slideStartAudioTime = audioEl?.currentTime ?? 0;
 	}
 
 	function onKey(e: KeyboardEvent) {

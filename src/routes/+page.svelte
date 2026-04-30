@@ -1,119 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
-	import {
-		addPhoto,
-		clearAudio,
-		deletePhoto,
-		loadProject,
-		saveAudio,
-		saveOrder,
-		saveSettings,
-		setPhotoDuration,
-		DEFAULT_SETTINGS,
-		type AudioRecord,
-		type PhotoRecord,
-		type ProjectSettings
-	} from '$lib/db';
-
-	let photos = $state<PhotoRecord[]>([]);
-	let audio = $state<AudioRecord | undefined>(undefined);
-	let settings = $state<ProjectSettings>({ ...DEFAULT_SETTINGS });
-	let loading = $state(true);
-	let dragId = $state<string | null>(null);
-	let audioUrl = $state<string | undefined>(undefined);
-	let importing = $state(false);
-
-	const thumbCache = new Map<string, string>();
-	function thumb(p: PhotoRecord): string {
-		const cached = thumbCache.get(p.id);
-		if (cached) return cached;
-		const url = URL.createObjectURL(p.blob);
-		thumbCache.set(p.id, url);
-		return url;
-	}
-
-	onMount(async () => {
-		const data = await loadProject();
-		photos = data.photos;
-		audio = data.audio;
-		settings = data.settings;
-		if (audio) audioUrl = URL.createObjectURL(audio.blob);
-		loading = false;
-	});
-
-	onDestroy(() => {
-		for (const url of thumbCache.values()) URL.revokeObjectURL(url);
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
-	});
-
-	async function onPhotoFiles(files: FileList | null) {
-		if (!files || files.length === 0) return;
-		importing = true;
-		try {
-			for (const file of Array.from(files)) {
-				if (!file.type.startsWith('image/')) continue;
-				const rec = await addPhoto(file);
-				photos = [...photos, rec];
-			}
-		} finally {
-			importing = false;
-		}
-	}
-
-	async function onAudioFile(files: FileList | null) {
-		const file = files?.[0];
-		if (!file) return;
-		const rec = await saveAudio(file, 'upload');
-		audio = rec;
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
-		audioUrl = URL.createObjectURL(rec.blob);
-	}
-
-	async function removeAudio() {
-		await clearAudio();
-		audio = undefined;
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
-		audioUrl = undefined;
-	}
-
-	async function onDelete(id: string) {
-		await deletePhoto(id);
-		photos = photos.filter((p) => p.id !== id);
-		const url = thumbCache.get(id);
-		if (url) {
-			URL.revokeObjectURL(url);
-			thumbCache.delete(id);
-		}
-	}
-
-	async function onDurationChange(id: string, value: string) {
-		const num = value === '' ? undefined : Number(value);
-		await setPhotoDuration(id, num);
-		photos = photos.map((p) => (p.id === id ? { ...p, duration: num } : p));
-	}
-
-	async function persistSettings() {
-		await saveSettings(settings);
-	}
-
-	function onDragStart(id: string) {
-		dragId = id;
-	}
-	async function onDrop(targetId: string) {
-		if (!dragId || dragId === targetId) {
-			dragId = null;
-			return;
-		}
-		const from = photos.findIndex((p) => p.id === dragId);
-		const to = photos.findIndex((p) => p.id === targetId);
-		if (from < 0 || to < 0) return;
-		const next = [...photos];
-		const [moved] = next.splice(from, 1);
-		next.splice(to, 0, moved);
-		photos = next;
-		dragId = null;
-		await saveOrder(next.map((p) => p.id));
-	}
+	// landing
 </script>
 
 <svelte:head>
@@ -123,131 +9,25 @@
 <main>
 	<header>
 		<h1>Film Lightbox</h1>
-		<p class="muted">A photo + music slideshow you can play on your TV.</p>
+		<p class="muted">A photo + music slideshow for your TV.</p>
 	</header>
 
-	{#if loading}
-		<p>Loading…</p>
-	{:else}
-		<section>
-			<h2>1. Photos</h2>
-			<label class="file-input">
-				<input
-					type="file"
-					accept="image/*"
-					multiple
-					onchange={(e) => onPhotoFiles((e.currentTarget as HTMLInputElement).files)}
-				/>
-				<span>{importing ? 'Adding…' : 'Add photos'}</span>
-			</label>
+	<section class="modes">
+		<a class="mode" href="/host">
+			<h2>📺 Host on TV</h2>
+			<p>Open this on the TV. Get a 4-digit room code. Friends upload photos from their phones.</p>
+		</a>
 
-			{#if photos.length === 0}
-				<p class="muted">No photos yet. Drag-drop or click above. Stored locally in your browser; you won't need to re-upload next time.</p>
-			{:else}
-				<div class="grid" role="list">
-					{#each photos as p (p.id)}
-						<div
-							class="thumb"
-							role="listitem"
-							class:portrait={p.orientation === 'portrait'}
-							draggable="true"
-							ondragstart={() => onDragStart(p.id)}
-							ondragover={(e) => e.preventDefault()}
-							ondrop={() => onDrop(p.id)}
-						>
-							<img src={thumb(p)} alt="" />
-							<div class="thumb-actions">
-								<input
-									type="number"
-									min="0.5"
-									step="0.5"
-									placeholder="{settings.defaultDuration}s"
-									value={p.duration ?? ''}
-									onchange={(e) => onDurationChange(p.id, (e.currentTarget as HTMLInputElement).value)}
-								/>
-								<button onclick={() => onDelete(p.id)} aria-label="Delete">×</button>
-							</div>
-						</div>
-					{/each}
-				</div>
-				<p class="muted">Drag tiles to reorder. Per-photo duration overrides the default.</p>
-			{/if}
-		</section>
+		<a class="mode" href="/upload">
+			<h2>📱 Upload from phone</h2>
+			<p>Enter the room code shown on the TV. Pick photos. They appear in the slideshow.</p>
+		</a>
 
-		<section>
-			<h2>2. Music</h2>
-			<label class="file-input">
-				<input
-					type="file"
-					accept="audio/*"
-					onchange={(e) => onAudioFile((e.currentTarget as HTMLInputElement).files)}
-				/>
-				<span>Upload audio file</span>
-			</label>
-
-			{#if audio}
-				<div class="audio-info">
-					<span>Loaded: {audio.source} ({audio.mimeType})</span>
-					<button onclick={removeAudio}>Remove</button>
-				</div>
-				{#if audioUrl}
-					<audio controls src={audioUrl}></audio>
-				{/if}
-			{:else}
-				<p class="muted">Upload an MP3/WAV/M4A. (YouTube extraction coming in Phase 2.)</p>
-			{/if}
-		</section>
-
-		<section>
-			<h2>3. Settings</h2>
-			<div class="settings">
-				<label>
-					Default duration (s)
-					<input
-						type="number"
-						min="0.5"
-						step="0.5"
-						bind:value={settings.defaultDuration}
-						onchange={persistSettings}
-					/>
-				</label>
-				<label>
-					Crossfade (ms)
-					<input
-						type="number"
-						min="0"
-						step="50"
-						bind:value={settings.transitionMs}
-						onchange={persistSettings}
-					/>
-				</label>
-				<label>
-					<input type="checkbox" bind:checked={settings.pairPortraits} onchange={persistSettings} />
-					Pair vertical photos side-by-side
-				</label>
-				<label>
-					<input type="checkbox" bind:checked={settings.beatSync} onchange={persistSettings} />
-					Sync slide changes to beats
-				</label>
-				{#if settings.beatSync}
-					<label>
-						Min dwell (ms)
-						<input
-							type="number"
-							min="200"
-							step="100"
-							bind:value={settings.minDwellMs}
-							onchange={persistSettings}
-						/>
-					</label>
-				{/if}
-			</div>
-		</section>
-
-		<section class="actions">
-			<a class="btn primary" class:disabled={photos.length === 0} href="/play">▶ Play fullscreen</a>
-		</section>
-	{/if}
+		<a class="mode" href="/solo">
+			<h2>👤 Solo (offline)</h2>
+			<p>One device, no internet, no Supabase. Photos stay in this browser. Best for personal use.</p>
+		</a>
+	</section>
 </main>
 
 <style>
@@ -255,155 +35,47 @@
 		margin: 0;
 		background: #0a0a0a;
 		color: #eee;
-		font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+		font-family: ui-sans-serif, system-ui, sans-serif;
 	}
 	main {
-		max-width: 920px;
+		max-width: 720px;
 		margin: 0 auto;
-		padding: 2rem 1.25rem 5rem;
+		padding: 4rem 1.25rem;
 	}
-	header h1 {
-		margin: 0;
-		font-weight: 600;
-		letter-spacing: 0.5px;
+	h1 {
+		font-weight: 300;
+		letter-spacing: 0.05em;
+		margin: 0 0 0.25rem;
 	}
 	.muted {
 		color: #888;
-		font-size: 0.9rem;
 	}
-	section {
-		margin-top: 2.5rem;
-	}
-	h2 {
-		font-size: 1.05rem;
-		font-weight: 500;
-		color: #aaa;
-		text-transform: uppercase;
-		letter-spacing: 0.1em;
-		margin-bottom: 0.75rem;
-	}
-	.file-input {
-		display: inline-block;
-		cursor: pointer;
-	}
-	.file-input input {
-		display: none;
-	}
-	.file-input span {
-		display: inline-block;
-		padding: 0.55rem 1rem;
-		border: 1px solid #333;
-		border-radius: 6px;
-		background: #161616;
-	}
-	.file-input span:hover {
-		background: #1f1f1f;
-	}
-	.grid {
+	.modes {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-		gap: 0.5rem;
-		margin-top: 1rem;
-	}
-	.thumb {
-		position: relative;
-		aspect-ratio: 4 / 3;
-		background: #111;
-		border: 1px solid #222;
-		border-radius: 4px;
-		overflow: hidden;
-		cursor: grab;
-	}
-	.thumb.portrait {
-		aspect-ratio: 3 / 4;
-	}
-	.thumb img {
-		width: 100%;
-		height: 100%;
-		object-fit: cover;
-		display: block;
-	}
-	.thumb-actions {
-		position: absolute;
-		inset: auto 0 0 0;
-		display: flex;
-		gap: 4px;
-		padding: 4px;
-		background: linear-gradient(to top, rgba(0, 0, 0, 0.85), transparent);
-	}
-	.thumb-actions input {
-		flex: 1;
-		min-width: 0;
-		background: rgba(0, 0, 0, 0.6);
-		border: 1px solid #333;
-		color: #eee;
-		padding: 2px 6px;
-		border-radius: 3px;
-		font-size: 0.75rem;
-	}
-	.thumb-actions button {
-		background: rgba(0, 0, 0, 0.6);
-		border: 1px solid #333;
-		color: #eee;
-		width: 26px;
-		border-radius: 3px;
-		cursor: pointer;
-	}
-	.audio-info {
-		margin-top: 0.75rem;
-		display: flex;
-		align-items: center;
 		gap: 1rem;
-	}
-	.audio-info button {
-		background: #1f1f1f;
-		border: 1px solid #333;
-		color: #eee;
-		padding: 0.3rem 0.7rem;
-		border-radius: 4px;
-		cursor: pointer;
-	}
-	audio {
-		display: block;
-		margin-top: 0.5rem;
-		width: 100%;
-		max-width: 480px;
-	}
-	.settings {
-		display: grid;
-		gap: 0.75rem;
-		max-width: 320px;
-	}
-	.settings label {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1rem;
-	}
-	.settings input[type='number'] {
-		width: 100px;
-		background: #161616;
-		border: 1px solid #333;
-		color: #eee;
-		padding: 0.3rem 0.5rem;
-		border-radius: 4px;
-	}
-	.actions {
 		margin-top: 3rem;
 	}
-	.btn {
-		display: inline-block;
-		padding: 0.75rem 1.5rem;
-		border-radius: 6px;
+	.mode {
+		display: block;
+		padding: 1.25rem 1.5rem;
+		background: #111;
+		border: 1px solid #222;
+		border-radius: 8px;
 		text-decoration: none;
+		color: inherit;
+	}
+	.mode:hover {
+		background: #161616;
+		border-color: #333;
+	}
+	.mode h2 {
+		margin: 0 0 0.4rem;
+		font-size: 1.05rem;
 		font-weight: 500;
 	}
-	.btn.primary {
-		background: #e0e0e0;
-		color: #0a0a0a;
-	}
-	.btn.disabled {
-		opacity: 0.4;
-		pointer-events: none;
+	.mode p {
+		margin: 0;
+		color: #888;
+		font-size: 0.9rem;
 	}
 </style>
