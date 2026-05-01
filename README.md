@@ -1,6 +1,29 @@
 # Film Lightbox
 
-A photo slideshow for the TV that anyone in the room can contribute to from their phone. No accounts, no app to install — guests scan a 6-digit code, pick photos, and they appear on the screen in seconds.
+A lightweight photo slideshow for the TV that anyone in the room can contribute to from their phone. No accounts, no app to install — guests scan a 6-digit code, pick photos, and they appear on the screen in seconds.
+
+<p align="center">
+        <img src="assets/desktop_room.png" alt="TV slideshow" style="width:48%;max-width:420px;margin-right:8px;border:1px solid #eee;border-radius:6px" />
+            <img src="assets/phone_upload_room_filled.PNG" alt="Upload from phone" style="width:48%;max-width:420px;border:1px solid #eee;border-radius:6px" />
+</p>
+
+Quick overview: guests scan a 6-digit room code on their phone, upload resized JPEGs (client-side), and the host view (TV) polls the shared Supabase Storage bucket to show incoming photos in a fullscreen slideshow.
+
+---
+
+## Assets gallery
+
+All images currently in the `assets/` folder are shown below. If an image appears as a placeholder in your editor, add the corresponding file to `assets/` or run `pnpm dev` to serve the static files locally.
+
+<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start">
+    <img src="assets/desktop_main_menu.png" alt="desktop_main_menu" style="width:240px;height:auto;border:1px solid #eee;border-radius:6px" />
+    <img src="assets/desktop_room.png" alt="desktop_room" style="width:240px;height:auto;border:1px solid #eee;border-radius:6px" />
+    <img src="assets/desktop_room_pics_uploaded.png" alt="desktop_room_pics_uploaded" style="width:240px;height:auto;border:1px solid #eee;border-radius:6px" />
+    <img src="assets/phone_join_room.PNG" alt="phone_join_room" style="width:160px;height:auto;border:1px solid #eee;border-radius:6px" />
+    <img src="assets/phone_main_menu.PNG" alt="phone_main_menu" style="width:160px;height:auto;border:1px solid #eee;border-radius:6px" />
+    <img src="assets/phone_upload_pics_empty.PNG" alt="phone_upload_pics_empty" style="width:160px;height:auto;border:1px solid #eee;border-radius:6px" />
+    <img src="assets/phone_upload_room_filled.PNG" alt="phone_upload_room_filled" style="width:160px;height:auto;border:1px solid #eee;border-radius:6px" />
+</div>
 
 > Built as a weekend project so I'd stop fumbling AirPlay at parties. Three modes, one stack, zero login screens.
 
