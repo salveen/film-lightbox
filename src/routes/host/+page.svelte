@@ -6,6 +6,7 @@
 
 	const SLIDE_MS = 5000;
 	const TRANSITION_MS = 800;
+	const MUSIC_FILE = 'youtube.txt';
 
 	let code = $state('');
 	let queue = $state<{ name: string; url: string }[]>([]);
@@ -13,15 +14,14 @@
 	let currentIndex = $state(0);
 	let nextIndex = $state<number | null>(null);
 	let transitionAt = $state(0);
-	let youtubeInput = $state('');
 	let videoId = $state<string | undefined>(undefined);
-	let youtubeStatus = $state<string | undefined>(undefined);
 	let containerEl: HTMLDivElement | undefined = $state();
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let rafId: number | null = null;
 	let lastAdvance = 0;
 	const seen = new Set<string>();
+	let lastMusicSig: string | undefined;
 
 	async function listExisting() {
 		const supa = getSupabase();
@@ -32,33 +32,47 @@
 			console.warn('list failed', error);
 			return;
 		}
-		for (const f of data ?? []) await addFile(f.name);
+		const files = data ?? [];
+		const musicFile = files.find((f) => f.name === MUSIC_FILE);
+		await syncMusic(musicFile);
+		for (const f of files) {
+			if (f.name === MUSIC_FILE) continue;
+			await addFile(f.name);
 		}
+	}
+
+	async function syncMusic(file: { updated_at?: string | null; created_at?: string | null } | undefined) {
+		if (!file) {
+			if (lastMusicSig !== undefined) {
+				lastMusicSig = undefined;
+				videoId = undefined;
+			}
+			return;
+		}
+		const sig = file.updated_at ?? file.created_at ?? '';
+		if (sig === lastMusicSig) return;
+		lastMusicSig = sig;
+		const supa = getSupabase();
+		const path = `${roomFolder(code)}/${MUSIC_FILE}`;
+		const { data: pub } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+		try {
+			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
+			if (!res.ok) return;
+			const txt = (await res.text()).trim();
+			const id = extractVideoId(txt);
+			videoId = id ?? undefined;
+		} catch (e) {
+			console.warn('failed to fetch music file', e);
+		}
+	}
 
 	async function addFile(name: string) {
-	 	const path = `${roomFolder(code)}/${name}`;
-	 	if (seen.has(path)) return;
-	 	seen.add(path);
-	 	const supa = getSupabase();
-	 	const { data } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
-
-	 	// special-case a youtube text file uploaded from the phone
-	 	if (name === 'youtube.txt') {
-	 		try {
-	 			const res = await fetch(data.publicUrl);
-	 			const txt = (await res.text()).trim();
-	 			const id = extractVideoId(txt);
-	 			if (id) {
-	 				videoId = id;
-	 				youtubeStatus = `Loaded from phone: ${id}`;
-	 			}
-	 		} catch (e) {
-	 			console.warn('failed to fetch youtube file', e);
-	 		}
-	 		return;
-	 	}
-
-	 	queue = [...queue, { name, url: data.publicUrl }];
+		const path = `${roomFolder(code)}/${name}`;
+		if (seen.has(path)) return;
+		seen.add(path);
+		const supa = getSupabase();
+		const { data } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+		queue = [...queue, { name, url: data.publicUrl }];
 	}
 
 	function startPolling() {
@@ -95,17 +109,6 @@
 			}
 		}
 		tick();
-	}
-
-	function loadYouTube() {
-		const id = extractVideoId(youtubeInput);
-		if (!id) {
-			youtubeStatus = 'Could not parse a YouTube video ID from that.';
-			videoId = undefined;
-			return;
-		}
-		videoId = id;
-		youtubeStatus = `Ready: ${id}`;
 	}
 
 	function exitFullscreen() {
@@ -161,24 +164,13 @@
 				On your phone: open this site → "Upload from phone" → enter code <strong>{code}</strong>
 			</p>
 
-			<div class="audio-box">
-				<label>
-					YouTube link (optional — plays as background music)
-					<input
-						type="url"
-						placeholder="https://www.youtube.com/watch?v=…"
-						bind:value={youtubeInput}
-					/>
-				</label>
-				<button onclick={loadYouTube} disabled={!youtubeInput}>Load YouTube</button>
-				{#if youtubeStatus}
-					<p class="muted small">{youtubeStatus}</p>
-				{/if}
-			</div>
-
-			<p class="queue-status">
+			<p class="status photos">
 				{queue.length} photo{queue.length === 1 ? '' : 's'} ready
 			</p>
+			<p class="status music" class:on={!!videoId}>
+				{videoId ? '🎵 Music linked from phone' : '🎵 No music yet — add a YouTube link from your phone'}
+			</p>
+
 			<button class="primary big" onclick={start} disabled={queue.length === 0}>
 				▶ Start slideshow
 			</button>
@@ -205,13 +197,15 @@
 	{/if}
 
 	{#if started && videoId}
-		<iframe
-			class="yt"
-			src={embedUrl(videoId)}
-			title="background music"
-			allow="autoplay; encrypted-media"
-			frameborder="0"
-		></iframe>
+		{#key videoId}
+			<iframe
+				class="yt"
+				src={embedUrl(videoId)}
+				title="background music"
+				allow="autoplay; encrypted-media"
+				frameborder="0"
+			></iframe>
+		{/key}
 	{/if}
 </div>
 
@@ -264,33 +258,15 @@
 	.small {
 		font-size: 0.85rem;
 	}
-	.audio-box {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		max-width: 480px;
-		width: 100%;
-	}
-	.audio-box label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		text-align: left;
-		font-size: 0.85rem;
+	.status {
+		margin: 0;
 		color: #aaa;
 	}
-	.audio-box input {
-		background: #111;
-		border: 1px solid #333;
-		color: #eee;
-		padding: 0.5rem;
-		border-radius: 4px;
+	.status.photos {
+		margin-top: 1.5rem;
 	}
-
-	.host.light .audio-box input {
-		background: #fff;
-		border: 1px solid #ddd;
-		color: #000;
+	.status.music.on {
+		color: #6c6;
 	}
 	button {
 		padding: 0.6rem 1.2rem;
@@ -313,10 +289,6 @@
 		padding: 0.85rem 2rem;
 		font-size: 1.05rem;
 		margin-top: 1rem;
-	}
-	.queue-status {
-		margin-top: 1.5rem;
-		color: #aaa;
 	}
 	.slide {
 		position: absolute;

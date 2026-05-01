@@ -3,13 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { loadProject, type AudioRecord, type PhotoRecord, type ProjectSettings } from '$lib/db';
 	import { buildSlides, type Slide } from '$lib/slides';
+	import { embedUrl, extractVideoId } from '$lib/youtube';
 
 	let photos: PhotoRecord[] = [];
 	let audio = $state<AudioRecord | undefined>(undefined);
 	let settings: ProjectSettings | undefined;
 	let slides = $state<Slide[]>([]);
 	let urlMap = new Map<string, string>();
-	let audioUrl = $state<string | undefined>(undefined);
 	let videoId = $state<string | undefined>(undefined);
 
 	let currentIndex = $state(0);
@@ -19,7 +19,6 @@
 	let paused = $state(false);
 	let error = $state<string | undefined>(undefined);
 
-	let audioEl: HTMLAudioElement | undefined = $state();
 	let containerEl: HTMLDivElement | undefined = $state();
 
 	let rafId: number | null = null;
@@ -44,34 +43,18 @@
 		audio = data.audio;
 		settings = data.settings;
 		slides = buildSlides(photos, settings.defaultDuration, settings.pairPortraits);
-		if (audio) {
-			if (audio.source === 'youtube' && audio.youtubeUrl) {
-				// extract video id from saved youtube link
-				const m = audio.youtubeUrl.match(/[?&]v=([^&]+)/);
-				videoId = m ? m[1] : audio.youtubeUrl;
-			} else if (audio.blob) {
-				audioUrl = URL.createObjectURL(audio.blob);
-			}
-		}
+		if (audio) videoId = extractVideoId(audio.youtubeUrl) ?? undefined;
 	});
 
 	onDestroy(() => {
 		if (rafId !== null) cancelAnimationFrame(rafId);
 		for (const u of urlMap.values()) URL.revokeObjectURL(u);
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
 	});
 
 	async function start() {
 		started = true;
 		slideStartedAt = performance.now();
-		if (audioEl) {
-			try {
-				await audioEl.play();
-			} catch (e) {
-				console.warn('Audio play failed', e);
-			}
-		}
-		if (containerEl && containerEl.requestFullscreen) {
+		if (containerEl?.requestFullscreen) {
 			try {
 				await containerEl.requestFullscreen();
 			} catch {
@@ -109,9 +92,7 @@
 	}
 
 	function exit() {
-		if (document.fullscreenElement) {
-			void document.exitFullscreen();
-		}
+		if (document.fullscreenElement) void document.exitFullscreen();
 		void goto('/');
 	}
 
@@ -145,8 +126,6 @@
 		else if (e.key === ' ') {
 			e.preventDefault();
 			paused = !paused;
-			if (paused) audioEl?.pause();
-			else void audioEl?.play();
 		} else if (e.key === 'Escape') exit();
 	}
 </script>
@@ -162,7 +141,7 @@
 	{:else if !started}
 		<div class="overlay">
 			<h1>Film Lightbox</h1>
-			<p class="muted">{slides.length} slide{slides.length === 1 ? '' : 's'}{audio ? ' · audio loaded' : ' · no audio'}</p>
+			<p class="muted">{slides.length} slide{slides.length === 1 ? '' : 's'}{videoId ? ' · audio loaded' : ' · no audio'}</p>
 			<button class="primary" onclick={start}>▶ Start</button>
 			<p class="hint muted">→ next · ← previous · space pause · esc exit</p>
 		</div>
@@ -190,12 +169,8 @@
 		{/each}
 	{/if}
 
-	{#if audioUrl}
-		<audio bind:this={audioEl} src={audioUrl} loop preload="auto"></audio>
-	{/if}
-
-	{#if videoId}
-		<iframe class="yt" src={`https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&rel=0`} title="background music" allow="autoplay; encrypted-media" frameborder="0"></iframe>
+	{#if started && videoId}
+		<iframe class="yt" src={embedUrl(videoId)} title="background music" allow="autoplay; encrypted-media" frameborder="0"></iframe>
 	{/if}
 </div>
 
@@ -286,7 +261,13 @@
 		max-height: 100%;
 		object-fit: contain;
 	}
-	audio {
-		display: none;
+	.yt {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		border: 0;
+		pointer-events: none;
+		z-index: 0;
 	}
 </style>

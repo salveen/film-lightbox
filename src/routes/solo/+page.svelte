@@ -5,7 +5,6 @@
 		clearAudio,
 		deletePhoto,
 		loadProject,
-		saveAudio,
 		saveYouTubeLink,
 		saveOrder,
 		saveSettings,
@@ -15,13 +14,13 @@
 		type PhotoRecord,
 		type ProjectSettings
 	} from '$lib/db';
+	import { extractVideoId } from '$lib/youtube';
 
 	let photos = $state<PhotoRecord[]>([]);
 	let audio = $state<AudioRecord | undefined>(undefined);
 	let settings = $state<ProjectSettings>({ ...DEFAULT_SETTINGS });
 	let loading = $state(true);
 	let dragId = $state<string | null>(null);
-	let audioUrl = $state<string | undefined>(undefined);
 	let importing = $state(false);
 	let youtubeInput = $state('');
 	let ytStatus = $state<string | undefined>(undefined);
@@ -40,13 +39,12 @@
 		photos = data.photos;
 		audio = data.audio;
 		settings = data.settings;
-		if (audio) audioUrl = URL.createObjectURL(audio.blob);
+		if (audio) youtubeInput = audio.youtubeUrl;
 		loading = false;
 	});
 
 	onDestroy(() => {
 		for (const url of thumbCache.values()) URL.revokeObjectURL(url);
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
 	});
 
 	async function onPhotoFiles(files: FileList | null) {
@@ -63,34 +61,25 @@
 		}
 	}
 
-	async function onAudioFile(files: FileList | null) {
-		const file = files?.[0];
-		if (!file) return;
-		const rec = await saveAudio(file, 'upload');
-		audio = rec;
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
-		audioUrl = URL.createObjectURL(rec.blob);
-	}
-
-	async function sendYouTubeToLocal(files?: FileList | null) {
-		if (!youtubeInput) return (ytStatus = 'Enter a YouTube link');
-		importing = true;
-		try {
-			const rec = await saveYouTubeLink(youtubeInput);
-			audio = rec as any;
-			ytStatus = 'Saved';
-		} catch (e) {
-			ytStatus = e instanceof Error ? e.message : String(e);
-		} finally {
-			importing = false;
+	async function saveYouTube() {
+		const url = youtubeInput.trim();
+		if (!url) {
+			ytStatus = 'Enter a YouTube link';
+			return;
 		}
+		if (!extractVideoId(url)) {
+			ytStatus = "Couldn't parse a YouTube video ID from that link.";
+			return;
+		}
+		audio = await saveYouTubeLink(url);
+		ytStatus = 'Saved';
 	}
 
 	async function removeAudio() {
 		await clearAudio();
 		audio = undefined;
-		if (audioUrl) URL.revokeObjectURL(audioUrl);
-		audioUrl = undefined;
+		youtubeInput = '';
+		ytStatus = undefined;
 	}
 
 	async function onDelete(id: string) {
@@ -192,38 +181,25 @@
 		</section>
 
 		<section>
-			<h2>2. Music</h2>
-			<label class="file-input">
-				<input
-					type="file"
-					accept="audio/*"
-					onchange={(e) => onAudioFile((e.currentTarget as HTMLInputElement).files)}
-				/>
-				<span>Upload audio file</span>
-			</label>
-
+			<h2>2. Music (YouTube)</h2>
 			<div class="youtube-send">
 				<label>
-					Play YouTube link locally
+					YouTube link — plays as background music in the slideshow
 					<input type="url" placeholder="https://www.youtube.com/watch?v=…" bind:value={youtubeInput} />
 				</label>
-				<button onclick={sendYouTubeToLocal} disabled={!youtubeInput || importing}>Save YouTube</button>
+				<div class="row">
+					<button onclick={saveYouTube} disabled={!youtubeInput || importing}>Save</button>
+					{#if audio}
+						<button onclick={removeAudio}>Remove</button>
+					{/if}
+				</div>
 				{#if ytStatus}
 					<p class="muted small">{ytStatus}</p>
 				{/if}
-			</div>
-
-			{#if audio}
-				<div class="audio-info">
-					<span>Loaded: {audio.source} ({audio.mimeType})</span>
-					<button onclick={removeAudio}>Remove</button>
-				</div>
-				{#if audioUrl}
-					<audio controls src={audioUrl}></audio>
+				{#if audio && !ytStatus}
+					<p class="muted small">Saved: {audio.youtubeUrl}</p>
 				{/if}
-			{:else}
-				<p class="muted">Upload an MP3/WAV/M4A. (YouTube extraction coming in Phase 2.)</p>
-			{/if}
+			</div>
 		</section>
 
 		<section>
@@ -282,6 +258,9 @@
 	.muted {
 		color: #888;
 		font-size: 0.9rem;
+	}
+	.small {
+		font-size: 0.85rem;
 	}
 	section {
 		margin-top: 2.5rem;
@@ -361,25 +340,41 @@
 		border-radius: 3px;
 		cursor: pointer;
 	}
-	.audio-info {
-		margin-top: 0.75rem;
+	.youtube-send {
 		display: flex;
-		align-items: center;
-		gap: 1rem;
+		flex-direction: column;
+		gap: 0.5rem;
+		max-width: 480px;
 	}
-	.audio-info button {
+	.youtube-send label {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-size: 0.85rem;
+		color: #aaa;
+	}
+	.youtube-send input {
+		background: #111;
+		border: 1px solid #333;
+		color: #eee;
+		padding: 0.5rem;
+		border-radius: 4px;
+	}
+	.row {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.row button {
 		background: #1f1f1f;
 		border: 1px solid #333;
 		color: #eee;
-		padding: 0.3rem 0.7rem;
+		padding: 0.4rem 0.9rem;
 		border-radius: 4px;
 		cursor: pointer;
 	}
-	audio {
-		display: block;
-		margin-top: 0.5rem;
-		width: 100%;
-		max-width: 480px;
+	.row button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
 	}
 	.settings {
 		display: grid;

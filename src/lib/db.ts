@@ -14,12 +14,7 @@ export interface PhotoRecord {
 
 export interface AudioRecord {
 	id: 'current';
-	// blob is present for uploaded audio; for YouTube source it may be undefined
-	blob?: Blob;
-	source: 'upload' | 'youtube';
-	youtubeUrl?: string;
-	mimeType?: string;
-	durationSec?: number;
+	youtubeUrl: string;
 }
 
 export interface ProjectSettings {
@@ -121,7 +116,11 @@ export async function deletePhoto(id: string) {
 	await tx.done;
 }
 
-export async function loadProject(): Promise<{ photos: PhotoRecord[]; audio?: AudioRecord; settings: ProjectSettings }> {
+export async function loadProject(): Promise<{
+	photos: PhotoRecord[];
+	audio?: AudioRecord;
+	settings: ProjectSettings;
+}> {
 	const db = await getDB();
 	const project = (await db.get('project', 'current')) ?? {
 		id: 'current' as const,
@@ -167,26 +166,9 @@ export async function setPhotoDuration(id: string, duration: number | undefined)
 	await db.put('photos', photo);
 }
 
-export async function saveAudio(blob: Blob, source: 'upload' | 'youtube', youtubeUrl?: string) {
+export async function saveYouTubeLink(youtubeUrl: string): Promise<AudioRecord> {
 	const db = await getDB();
-	const record: AudioRecord = {
-		id: 'current',
-		blob,
-		source,
-		youtubeUrl,
-		mimeType: blob.type || 'audio/mpeg'
-	};
-	await db.put('audio', record);
-	return record;
-}
-
-export async function saveYouTubeLink(url: string) {
-	const db = await getDB();
-	const record: AudioRecord = {
-		id: 'current',
-		source: 'youtube',
-		youtubeUrl: url
-	};
+	const record: AudioRecord = { id: 'current', youtubeUrl };
 	await db.put('audio', record);
 	return record;
 }

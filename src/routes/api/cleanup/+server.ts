@@ -5,7 +5,7 @@ import type { RequestHandler } from './$types';
 
 const TTL_HOURS = Number(env.ROOM_TTL_HOURS || '24');
 
-export const POST: RequestHandler = async () => {
+async function runCleanup() {
 	const supa = getServerSupabase();
 	const cutoff = Date.now() - TTL_HOURS * 60 * 60 * 1000;
 
@@ -34,4 +34,17 @@ export const POST: RequestHandler = async () => {
 	}
 
 	return json({ deleted, ttlHours: TTL_HOURS });
+}
+
+export const POST: RequestHandler = async () => runCleanup();
+
+export const GET: RequestHandler = async ({ request }) => {
+	const secret = env.CRON_SECRET;
+	if (secret) {
+		const auth = request.headers.get('authorization');
+		if (auth !== `Bearer ${secret}`) {
+			return json({ error: 'unauthorized' }, { status: 401 });
+		}
+	}
+	return runCleanup();
 };
