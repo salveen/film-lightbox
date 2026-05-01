@@ -14,18 +14,13 @@
 
 	<section class="modes">
 		<a class="mode" href="/host">
-			<h2>📺 Host on TV</h2>
-			<p>Open this on the TV. Get a 6-digit room code. Friends upload photos from their phones.</p>
+			<h2>📺 Host</h2>
+			<p>Open this on the screen running the slideshow. You'll get a 6-digit room code that others can use to join.</p>
 		</a>
 
 		<a class="mode" href="/upload">
-			<h2>📱 Upload from phone</h2>
-			<p>Enter the room code shown on the TV. Pick photos. They appear in the slideshow.</p>
-		</a>
-
-		<a class="mode" href="/solo">
-			<h2>👤 Solo (offline)</h2>
-			<p>One device, no internet, no Supabase. Photos stay in this browser. Best for personal use.</p>
+			<h2>📱 Upload</h2>
+			<p>Join a room with the code shown on the host screen. Upload photos and add background music for the slideshow.</p>
 		</a>
 	</section>
 </main>

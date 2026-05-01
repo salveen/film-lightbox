@@ -7,20 +7,54 @@
 	const SLIDE_MS = 5000;
 	const TRANSITION_MS = 800;
 	const MUSIC_FILE = 'youtube.txt';
+	const ORDER_FILE = 'order.txt';
+	const VIDEO_VOLUME = 0.4;
+
+	type SlideKind = 'image' | 'video';
+	interface SlideItem {
+		name: string;
+		url: string;
+		kind: SlideKind;
+	}
+
+	function classify(name: string): SlideKind | null {
+		if (name === MUSIC_FILE || name === ORDER_FILE) return null;
+		const lower = name.toLowerCase();
+		if (/\.(jpe?g|png|webp|gif|avif)$/.test(lower)) return 'image';
+		if (/\.(webm|mp4|mov|m4v|ogv)$/.test(lower)) return 'video';
+		return null;
+	}
+
+	async function readOrder(): Promise<string[]> {
+		try {
+			const supa = getSupabase();
+			const { data: pub } = supa.storage
+				.from(SUPABASE_BUCKET)
+				.getPublicUrl(`${roomFolder(code)}/${ORDER_FILE}`);
+			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
+			if (!res.ok) return [];
+			return (await res.text())
+				.split('\n')
+				.map((s) => s.trim())
+				.filter(Boolean);
+		} catch {
+			return [];
+		}
+	}
 
 	let code = $state('');
-	let queue = $state<{ name: string; url: string }[]>([]);
+	let queue = $state<SlideItem[]>([]);
 	let started = $state(false);
 	let currentIndex = $state(0);
 	let nextIndex = $state<number | null>(null);
 	let transitionAt = $state(0);
 	let videoId = $state<string | undefined>(undefined);
+	let paused = $state(false);
 	let containerEl: HTMLDivElement | undefined = $state();
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let rafId: number | null = null;
 	let lastAdvance = 0;
-	const seen = new Set<string>();
 	let lastMusicSig: string | undefined;
 
 	async function listExisting() {
@@ -35,10 +69,42 @@
 		const files = data ?? [];
 		const musicFile = files.find((f) => f.name === MUSIC_FILE);
 		await syncMusic(musicFile);
-		for (const f of files) {
-			if (f.name === MUSIC_FILE) continue;
-			await addFile(f.name);
+
+		const validNames = files.map((f) => f.name).filter((n) => classify(n) !== null);
+		const order = await readOrder();
+		const inOrder = order.filter((n) => validNames.includes(n));
+		const remaining = validNames.filter((n) => !order.includes(n));
+		const ordered = [...inOrder, ...remaining];
+
+		const existingByName = new Map(queue.map((q) => [q.name, q]));
+		const newQueue: SlideItem[] = ordered.map((name) => {
+			const existing = existingByName.get(name);
+			if (existing) return existing;
+			const { data: pub } = supa.storage
+				.from(SUPABASE_BUCKET)
+				.getPublicUrl(`${roomFolder(code)}/${name}`);
+			return { name, url: pub.publicUrl, kind: classify(name)! };
+		});
+
+		const changed =
+			newQueue.length !== queue.length ||
+			newQueue.some((q, i) => queue[i]?.name !== q.name);
+		if (!changed) return;
+
+		const validSet = new Set(ordered);
+		const currentName = queue[currentIndex]?.name;
+		if (currentName && !validSet.has(currentName)) {
+			currentIndex = 0;
+			nextIndex = null;
+			lastAdvance = performance.now();
+		} else if (currentName) {
+			const newIdx = newQueue.findIndex((q) => q.name === currentName);
+			if (newIdx >= 0) currentIndex = newIdx;
 		}
+		if (currentIndex >= newQueue.length) currentIndex = 0;
+		if (nextIndex !== null && nextIndex >= newQueue.length) nextIndex = null;
+
+		queue = newQueue;
 	}
 
 	async function syncMusic(file: { updated_at?: string | null; created_at?: string | null } | undefined) {
@@ -66,25 +132,18 @@
 		}
 	}
 
-	async function addFile(name: string) {
-		const path = `${roomFolder(code)}/${name}`;
-		if (seen.has(path)) return;
-		seen.add(path);
-		const supa = getSupabase();
-		const { data } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
-		queue = [...queue, { name, url: data.publicUrl }];
-	}
-
 	function startPolling() {
 		pollTimer = setInterval(listExisting, 3000);
 	}
 
 	function tick() {
 		rafId = requestAnimationFrame(tick);
-		if (!started || queue.length === 0) return;
+		if (!started || paused || queue.length === 0) return;
 		const now = performance.now();
 		if (nextIndex === null) {
-			if (now - lastAdvance >= SLIDE_MS && queue.length > 1) {
+			const current = queue[currentIndex];
+			const isVideo = current?.kind === 'video';
+			if (!isVideo && now - lastAdvance >= SLIDE_MS && queue.length > 1) {
 				nextIndex = (currentIndex + 1) % queue.length;
 				transitionAt = now;
 			}
@@ -97,6 +156,37 @@
 			}
 		}
 	}
+
+	function onVideoEnded() {
+		if (queue.length <= 1) {
+			lastAdvance = performance.now();
+			return;
+		}
+		if (nextIndex !== null) return;
+		nextIndex = (currentIndex + 1) % queue.length;
+		transitionAt = performance.now();
+	}
+
+	$effect(() => {
+		void currentIndex;
+		void nextIndex;
+		void paused;
+		void started;
+		if (!containerEl) return;
+		const visible = new Set<number>([currentIndex]);
+		if (nextIndex !== null) visible.add(nextIndex);
+		const videos = containerEl.querySelectorAll<HTMLVideoElement>('video[data-slide-i]');
+		for (const v of videos) {
+			const idx = Number(v.dataset.slideI);
+			const shouldPlay = started && !paused && visible.has(idx);
+			if (shouldPlay) {
+				void v.play().catch(() => {});
+			} else {
+				v.pause();
+				if (!visible.has(idx)) v.currentTime = 0;
+			}
+		}
+	});
 
 	async function start() {
 		started = true;
@@ -116,15 +206,23 @@
 		started = false;
 	}
 
+	function toggleFullscreen() {
+		if (document.fullscreenElement) void document.exitFullscreen();
+		else if (containerEl?.requestFullscreen) void containerEl.requestFullscreen();
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (!started) return;
 		if (e.key === 'Escape') exitFullscreen();
-		if (e.key === 'ArrowRight' && queue.length > 1) {
+		else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+		else if (e.key === ' ') {
+			e.preventDefault();
+			paused = !paused;
+		} else if (e.key === 'ArrowRight' && queue.length > 1) {
 			currentIndex = (currentIndex + 1) % queue.length;
 			nextIndex = null;
 			lastAdvance = performance.now();
-		}
-		if (e.key === 'ArrowLeft' && queue.length > 1) {
+		} else if (e.key === 'ArrowLeft' && queue.length > 1) {
 			currentIndex = (currentIndex - 1 + queue.length) % queue.length;
 			nextIndex = null;
 			lastAdvance = performance.now();
@@ -165,7 +263,7 @@
 			</p>
 
 			<p class="status photos">
-				{queue.length} photo{queue.length === 1 ? '' : 's'} ready
+				{queue.length} item{queue.length === 1 ? '' : 's'} ready
 			</p>
 			<p class="status music" class:on={!!videoId}>
 				{videoId ? '🎵 Music linked from phone' : '🎵 No music yet — add a YouTube link from your phone'}
@@ -174,7 +272,7 @@
 			<button class="primary big" onclick={start} disabled={queue.length === 0}>
 				▶ Start slideshow
 			</button>
-			<p class="muted small">→ ← navigate · esc exit fullscreen</p>
+			<p class="muted small">→ ← navigate · space pause · f fullscreen · esc exit</p>
 		</div>
 	{:else}
 		{#each queue as item, i (item.name)}
@@ -190,7 +288,19 @@
 							: 0}
 					style:z-index={i === currentIndex ? 2 : i === nextIndex ? 3 : 1}
 				>
-					<img src={item.url} alt="" />
+					{#if item.kind === 'video'}
+						<!-- svelte-ignore a11y_media_has_caption -->
+						<video
+							src={item.url}
+							data-slide-i={i}
+							playsinline
+							preload="auto"
+							onended={onVideoEnded}
+							onloadedmetadata={(e) => (e.currentTarget.volume = VIDEO_VOLUME)}
+						></video>
+					{:else}
+						<img src={item.url} alt="" />
+					{/if}
 				</div>
 			{/if}
 		{/each}
@@ -298,7 +408,8 @@
 		justify-content: center;
 		background: #000;
 	}
-	.slide img {
+	.slide img,
+	.slide video {
 		max-width: 100%;
 		max-height: 100%;
 		object-fit: contain;
@@ -308,7 +419,8 @@
 		background: #fff;
 	}
 
-	.host.light .slide img {
+	.host.light .slide img,
+	.host.light .slide video {
 		max-width: 80%;
 		max-height: 80%;
 	}

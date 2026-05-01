@@ -1,18 +1,37 @@
 <script lang="ts">
 	import { isValidCode } from '$lib/roomCode';
 	import { resizeForTV } from '$lib/resizeImage';
+	import { processVideo } from '$lib/processVideo';
 	import { getSupabase, roomFolder, SUPABASE_BUCKET } from '$lib/supabase';
 	import { extractVideoId } from '$lib/youtube';
 
-	type UploadStatus = 'pending' | 'uploading' | 'done' | 'error';
-	interface UploadEntry { name: string; status: UploadStatus; error?: string }
+	type ItemStatus = 'processing' | 'uploading' | 'done' | 'error';
+	type Kind = 'image' | 'video';
+	interface RoomItem {
+		id: string;
+		label: string;
+		storageName?: string;
+		kind: Kind;
+		url?: string;
+		status: ItemStatus;
+		progress?: number;
+		error?: string;
+	}
 	type MusicState = 'idle' | 'saving' | 'saved' | 'error';
 
 	const MUSIC_FILE = 'youtube.txt';
+	const ORDER_FILE = 'order.txt';
+
+	function classifyExt(name: string): Kind | null {
+		const lower = name.toLowerCase();
+		if (/\.(jpe?g|png|webp|gif|avif)$/.test(lower)) return 'image';
+		if (/\.(webm|mp4|mov|m4v|ogv)$/.test(lower)) return 'video';
+		return null;
+	}
 
 	let code = $state('');
 	let joined = $state(false);
-	let uploads = $state<UploadEntry[]>([]);
+	let items = $state<RoomItem[]>([]);
 	let globalError = $state<string | undefined>(undefined);
 
 	let youtubeInput = $state('');
@@ -24,6 +43,96 @@
 		if (!isValidCode(code)) return;
 		joined = true;
 		void loadCurrentMusic();
+		void loadRoomItems();
+	}
+
+	async function readOrder(): Promise<string[]> {
+		try {
+			const supa = getSupabase();
+			const { data: pub } = supa.storage
+				.from(SUPABASE_BUCKET)
+				.getPublicUrl(`${roomFolder(code)}/${ORDER_FILE}`);
+			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
+			if (!res.ok) return [];
+			return (await res.text())
+				.split('\n')
+				.map((s) => s.trim())
+				.filter(Boolean);
+		} catch {
+			return [];
+		}
+	}
+
+	async function writeOrder() {
+		const supa = getSupabase();
+		const path = `${roomFolder(code)}/${ORDER_FILE}`;
+		const names = items.filter((i) => i.storageName).map((i) => i.storageName!);
+		const blob = new Blob([names.join('\n')], { type: 'text/plain' });
+		await supa.storage
+			.from(SUPABASE_BUCKET)
+			.upload(path, blob, { contentType: 'text/plain', upsert: true });
+	}
+
+	async function loadRoomItems() {
+		try {
+			const supa = getSupabase();
+			const folder = roomFolder(code);
+			const { data: list } = await supa.storage
+				.from(SUPABASE_BUCKET)
+				.list(folder, { limit: 1000, sortBy: { column: 'created_at', order: 'asc' } });
+			if (!list) return;
+
+			const validNames = list.map((f) => f.name).filter((n) => classifyExt(n) !== null);
+			const order = await readOrder();
+			const inOrder = order.filter((n) => validNames.includes(n));
+			const remaining = validNames.filter((n) => !order.includes(n));
+			const ordered = [...inOrder, ...remaining];
+
+			items = ordered.map((name) => {
+				const { data: pub } = supa.storage
+					.from(SUPABASE_BUCKET)
+					.getPublicUrl(`${folder}/${name}`);
+				return {
+					id: name,
+					label: name,
+					storageName: name,
+					kind: classifyExt(name)!,
+					url: pub.publicUrl,
+					status: 'done' as ItemStatus
+				};
+			});
+		} catch (e) {
+			console.warn('loadRoomItems failed', e);
+		}
+	}
+
+	async function deleteItem(id: string) {
+		const item = items.find((i) => i.id === id);
+		if (!item) return;
+		if (item.storageName) {
+			try {
+				const supa = getSupabase();
+				await supa.storage
+					.from(SUPABASE_BUCKET)
+					.remove([`${roomFolder(code)}/${item.storageName}`]);
+			} catch (e) {
+				globalError = e instanceof Error ? e.message : String(e);
+				return;
+			}
+		}
+		items = items.filter((i) => i.id !== id);
+		if (item.storageName) await writeOrder();
+	}
+
+	async function moveItem(id: string, dir: -1 | 1) {
+		const idx = items.findIndex((i) => i.id === id);
+		if (idx < 0) return;
+		const newIdx = idx + dir;
+		if (newIdx < 0 || newIdx >= items.length) return;
+		const next = [...items];
+		[next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+		items = next;
+		await writeOrder();
 	}
 
 	async function loadCurrentMusic() {
@@ -114,30 +223,72 @@
 		}
 
 		for (const file of Array.from(files)) {
-			if (!file.type.startsWith('image/')) continue;
-			const entry: UploadEntry = { name: file.name, status: 'uploading' };
-			uploads = [...uploads, entry];
+			const isImage = file.type.startsWith('image/');
+			const isVideo = file.type.startsWith('video/');
+			if (!isImage && !isVideo) continue;
+
+			const id = `tmp_${Math.random().toString(36).slice(2)}`;
+			const item: RoomItem = {
+				id,
+				label: file.name,
+				kind: isImage ? 'image' : 'video',
+				status: 'processing'
+			};
+			items = [...items, item];
+			const refresh = () => (items = [...items]);
+
 			try {
-				const resized = await resizeForTV(file);
 				const stamp = Date.now().toString(36);
 				const rand = Math.random().toString(36).slice(2, 8);
-				const path = `${roomFolder(code)}/${stamp}_${rand}.jpg`;
+
+				let blob: Blob;
+				let contentType: string;
+				let ext: string;
+
+				if (isImage) {
+					const resized = await resizeForTV(file);
+					blob = resized.blob;
+					contentType = resized.mimeType;
+					ext = 'jpg';
+				} else {
+					const processed = await processVideo(file, (frac) => {
+						item.progress = frac;
+						refresh();
+					});
+					blob = processed.blob;
+					contentType = processed.mimeType;
+					ext = processed.ext;
+				}
+
+				item.status = 'uploading';
+				item.progress = undefined;
+				refresh();
+
+				const storageName = `${stamp}_${rand}.${ext}`;
+				const path = `${roomFolder(code)}/${storageName}`;
 				const { error } = await supa.storage
 					.from(SUPABASE_BUCKET)
-					.upload(path, resized.blob, { contentType: resized.mimeType, upsert: false });
+					.upload(path, blob, { contentType, upsert: false });
 				if (error) {
-					entry.status = 'error';
-					entry.error = error.message;
+					item.status = 'error';
+					item.error = error.message;
 				} else {
-					entry.status = 'done';
+					const { data: pub } = supa.storage
+						.from(SUPABASE_BUCKET)
+						.getPublicUrl(path);
+					item.id = storageName;
+					item.storageName = storageName;
+					item.url = pub.publicUrl;
+					item.status = 'done';
 				}
 			} catch (e) {
-				entry.status = 'error';
-				entry.error = e instanceof Error ? e.message : String(e);
+				item.status = 'error';
+				item.error = e instanceof Error ? e.message : String(e);
 			}
-			uploads = [...uploads];
+			refresh();
 		}
 		if (inputEl) inputEl.value = '';
+		await writeOrder();
 	}
 </script>
 
@@ -163,35 +314,87 @@
 		<h1>Room <span class="code">{code}</span></h1>
 
 		<section class="block">
-			<h2>Photos</h2>
-			<p class="muted">Pick photos. They'll show on the TV automatically.</p>
+			<h2>Photos & videos</h2>
+			<p class="muted">
+				Pick photos or videos. Videos over 1080p are compressed in your browser before upload — that
+				takes about as long as the clip itself.
+			</p>
 			<label class="file-input">
 				<input
 					type="file"
-					accept="image/*"
+					accept="image/*,video/*"
 					multiple
 					onchange={(e) => {
 						const el = e.currentTarget as HTMLInputElement;
 						onFiles(el.files, el);
 					}}
 				/>
-				<span>Choose photos</span>
+				<span>Choose photos or videos</span>
 			</label>
 
 			{#if globalError}
 				<p class="global-error">⚠ {globalError}</p>
 			{/if}
 
-			{#if uploads.length > 0}
-				<ul class="uploads">
-					{#each uploads as u, i (i)}
-						<li class={u.status}>
-							<span class="name">{u.name}</span>
-							<span class="status">
-								{#if u.status === 'uploading'}…{/if}
-								{#if u.status === 'done'}✓{/if}
-								{#if u.status === 'error'}✗ {u.error ?? ''}{/if}
-							</span>
+			{#if items.length > 0}
+				<ul class="items">
+					{#each items as item, i (item.id)}
+						<li class={item.status}>
+							<div class="thumb-wrap">
+								{#if item.url && item.kind === 'image'}
+									<img class="thumb" src={item.url} alt="" />
+								{:else if item.url && item.kind === 'video'}
+									<!-- svelte-ignore a11y_media_has_caption -->
+									<video class="thumb" src={item.url} preload="metadata" muted></video>
+								{:else}
+									<div class="thumb thumb-placeholder">
+										{item.kind === 'video' ? '🎬' : '📷'}
+									</div>
+								{/if}
+							</div>
+							<div class="info">
+								<span class="name">{item.label}</span>
+								{#if item.status !== 'done'}
+									<span class="status">
+										{#if item.status === 'processing' && item.progress !== undefined}
+											compressing {Math.round(item.progress * 100)}%
+										{:else if item.status === 'processing' || item.status === 'uploading'}
+											uploading…
+										{:else if item.status === 'error'}
+											✗ {item.error ?? ''}
+										{/if}
+									</span>
+								{/if}
+							</div>
+							{#if item.status === 'done'}
+								<div class="controls">
+									<button
+										class="ctrl"
+										disabled={i === 0}
+										onclick={() => moveItem(item.id, -1)}
+										aria-label="Move up">↑</button
+									>
+									<button
+										class="ctrl"
+										disabled={i === items.length - 1}
+										onclick={() => moveItem(item.id, 1)}
+										aria-label="Move down">↓</button
+									>
+									<button
+										class="ctrl danger"
+										onclick={() => deleteItem(item.id)}
+										aria-label="Delete">✕</button
+									>
+								</div>
+							{:else if item.status === 'error'}
+								<div class="controls">
+									<button
+										class="ctrl danger"
+										onclick={() => (items = items.filter((x) => x.id !== item.id))}
+										aria-label="Dismiss">✕</button
+									>
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -200,7 +403,7 @@
 
 		<section class="block">
 			<h2>Background music</h2>
-			<p class="muted">Paste a YouTube link. It'll play behind the slideshow on the TV.</p>
+			<p class="muted">Paste the link to your favourite track or playlist on YouTube — it'll play as background music during the slideshow.</p>
 			<input
 				type="url"
 				inputmode="url"
@@ -353,32 +556,84 @@
 	.music-msg.error {
 		color: #d66;
 	}
-	.uploads {
+	.items {
 		list-style: none;
 		padding: 0;
 		margin-top: 1.5rem;
 	}
-	.uploads li {
+	.items li {
 		display: flex;
-		justify-content: space-between;
-		gap: 0.5rem;
-		padding: 0.4rem 0;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.5rem 0;
 		border-bottom: 1px solid #1f1f1f;
 		font-size: 0.9rem;
 	}
-	.uploads li.done .status {
-		color: #6c6;
+	.thumb-wrap {
+		flex: 0 0 auto;
 	}
-	.uploads li.error .status {
-		color: #d66;
+	.thumb {
+		width: 44px;
+		height: 44px;
+		object-fit: cover;
+		border-radius: 4px;
+		background: #111;
+		display: block;
 	}
-	.uploads li.uploading .status {
-		color: #aaa;
+	.thumb-placeholder {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 1.1rem;
+	}
+	.info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
 	}
 	.name {
-		flex: 1;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.items li.error .status {
+		color: #d66;
+	}
+	.items li.uploading .status,
+	.items li.processing .status {
+		color: #aaa;
+		font-size: 0.8rem;
+	}
+	.controls {
+		display: flex;
+		gap: 0.25rem;
+		flex: 0 0 auto;
+	}
+	.ctrl {
+		width: 32px;
+		height: 32px;
+		padding: 0;
+		font-size: 0.95rem;
+		line-height: 1;
+		background: #1a1a1a;
+		border: 1px solid #2a2a2a;
+		color: #ccc;
+		border-radius: 4px;
+		cursor: pointer;
+	}
+	.ctrl:hover:not(:disabled) {
+		background: #222;
+		color: #fff;
+	}
+	.ctrl:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+	.ctrl.danger:hover:not(:disabled) {
+		background: #3a1818;
+		border-color: #5a2a2a;
+		color: #ff9b9b;
 	}
 </style>
