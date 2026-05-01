@@ -1,19 +1,97 @@
 # Film Lightbox
 
-A photo + music slideshow you can play on your TV. Three modes:
+A photo slideshow for the TV that anyone in the room can contribute to from their phone. No accounts, no app to install — guests scan a 6-digit code, pick photos, and they appear on the screen in seconds.
 
-- **Host on TV** — TV shows a 6-digit room code, friends upload photos from their phones, slideshow plays.
-- **Upload from phone** — enter code, pick photos, they appear on the TV.
-- **Solo (offline)** — one device, photos stay in IndexedDB, no backend needed. Works zero-config.
+> Built as a weekend project so I'd stop fumbling AirPlay at parties. Three modes, one stack, zero login screens.
 
-Quick links
+---
 
-- Host page: `/host`
-- Upload page: `/upload`
-- Solo editor: `/solo`
-- Player (fullscreen): `/play`
+## Modes
 
-## Develop
+| Mode | URL | What it does |
+| --- | --- | --- |
+| **Host** | `/host` | Opens on the TV. Generates a 6-digit room code, polls Supabase Storage for incoming uploads, runs the slideshow in fullscreen with crossfade. |
+| **Upload** | `/upload` | Phone view. Enter the room code, pick photos (resized client-side before upload), and optionally paste a YouTube link to set the background music — the TV picks it up automatically. |
+| **Solo** | `/solo` | Offline editor + player. Photos and YouTube link are stored in IndexedDB; works with no backend at all. Useful as a personal slideshow tool or as a fallback when there's no internet. |
+
+---
+
+## Tech stack
+
+| Layer | Choice | Why |
+| --- | --- | --- |
+| Framework | **SvelteKit 2** + **Svelte 5 (runes)** | Tiny bundle, file-based routing, and `$state` / `$derived` make the slideshow timing logic readable. |
+| Language | **TypeScript** | Strong types across DB schemas and Supabase responses. |
+| Storage (shared) | **Supabase Storage** | One public bucket per environment; rooms are folders (`room_<code>/`). No relational data needed, so I skipped Postgres entirely. |
+| Storage (local) | **IndexedDB** via `idb` | Solo mode persists the entire project — photo blobs, ordering, settings — without a server. |
+| Image pipeline | **OffscreenCanvas** + `createImageBitmap` | Photos are resized to 1920×1080 JPEG on the phone before upload, so the network sees ~200 KB instead of 5 MB. |
+| Hosting | **Vercel** (`@sveltejs/adapter-vercel`) | Static client + serverless `/api/*` routes + Vercel Cron for cleanup. |
+| Background music | **YouTube IFrame embed** | No licensing headaches, no audio files to host. Phone sends a URL, TV embeds it. |
+
+---
+
+## How it works
+
+### The host/phone handshake
+
+```
+┌─────────────┐                     ┌──────────────────┐                     ┌─────────────┐
+│   Phone     │  upload JPEG ──────▶│ Supabase bucket  │◀───── poll (3s) ────│   TV/Host   │
+│  /upload    │  upsert URL  ──────▶│  room_<code>/    │                     │   /host     │
+└─────────────┘                     └──────────────────┘                     └─────────────┘
+                                          │
+                                          │  hourly Vercel Cron
+                                          ▼
+                                    /api/cleanup
+                                    (deletes objects older than ROOM_TTL_HOURS)
+```
+
+- **Room codes** are 6-digit numbers generated client-side. There's no auth — the code *is* the access token. Acceptable for short-lived parties; not for sensitive media (see [Limitations](#limitations)).
+- **Photo uploads** are resized in `OffscreenCanvas` and named `<timestamp>_<rand>.jpg` so the host's `created_at` sort gives a stable display order.
+- **Music sync** uses a single text file: the phone upserts `youtube.txt` with the URL, and the host's poller watches its `updated_at` signature. When it changes, the host re-fetches with a cache-busted URL and remounts the YouTube iframe (`{#key videoId}` swaps the embed cleanly mid-slideshow).
+- **Cleanup** runs hourly via Vercel Cron — `GET /api/cleanup` walks the bucket and deletes objects older than `ROOM_TTL_HOURS`. Optionally gated by a `CRON_SECRET` bearer token.
+
+### The player
+
+- Triple-buffered: only the current and next slide DOM nodes are rendered at any time, so weak smart-TV browsers don't OOM on a 200-photo deck.
+- Crossfade is driven by `requestAnimationFrame` reading `performance.now()` — no CSS transitions, so seeking forward/backward with arrow keys is instant.
+- Vertical photos can be paired side-by-side (configurable per project) — a small `buildSlides()` reducer in [`src/lib/slides.ts`](src/lib/slides.ts) groups portraits when the next photo is also a portrait.
+- Per-photo duration override on top of a project-wide default.
+
+### Solo mode
+
+- Same player, different source: `loadProject()` from IndexedDB instead of polling Supabase.
+- Photo blobs are stored directly; the project record only keeps the ordered list of IDs and the settings.
+- Music is YouTube-only by design — no audio file uploads, no licensing risk, no megabytes in IndexedDB.
+
+---
+
+## Project structure
+
+```
+src/
+├── lib/
+│   ├── db.ts              IndexedDB schema + photo/audio/project operations (solo mode)
+│   ├── supabase.ts        Browser Supabase client (anon key)
+│   ├── server/supabase.ts Server Supabase client (service role, used only by /api/cleanup)
+│   ├── roomCode.ts        6-digit code generation + validation
+│   ├── resizeImage.ts     OffscreenCanvas → JPEG pipeline (1920×1080 cap)
+│   ├── youtube.ts         URL → video ID parsing, embed URL builder
+│   └── slides.ts          Photo array → slide list (handles portrait pairing)
+└── routes/
+    ├── +page.svelte       Landing page (mode picker)
+    ├── host/              TV view: code, polling, fullscreen player
+    ├── upload/            Phone view: photo + music input
+    ├── solo/              Offline editor
+    ├── play/              Solo fullscreen player
+    └── api/cleanup/       Hourly TTL sweep (POST manual / GET cron)
+```
+
+---
+
+## Running locally
+
+Requires Node 20+ and `pnpm`.
 
 ```sh
 pnpm install
@@ -21,74 +99,56 @@ pnpm dev
 # open http://localhost:5173
 ```
 
-Solo mode works immediately. Host/Upload modes need Supabase env vars.
-
-## Setup (Host/Upload modes)
-
-### 1. Supabase
-
-1. Create a free project at [supabase.com](https://supabase.com).
-2. Storage → New bucket → name it `rooms` → make it **public**.
-3. Storage → Policies → on the `rooms` bucket, add a policy allowing `INSERT` and `SELECT` for the `anon` role.
-4. Project Settings → API → copy the URL, anon key, and service-role key.
-
-### 2. Environment
+Solo mode works zero-config. For host/upload, copy `.env.example` → `.env` and fill in your Supabase credentials.
 
 ```sh
-cp .env.example .env
+pnpm check     # type-check
+pnpm build     # production build
+pnpm preview   # serve the build locally
 ```
 
-Fill in:
+---
 
-- `PUBLIC_SUPABASE_URL`, `PUBLIC_SUPABASE_ANON_KEY`, `PUBLIC_SUPABASE_BUCKET=rooms`
-- `SUPABASE_SERVICE_ROLE_KEY` (server-only, used by cleanup)
-- `ROOM_TTL_HOURS` (optional, default 24)
-- `CRON_SECRET` (optional; if set, the GET cleanup endpoint requires `Authorization: Bearer <secret>`)
+## Deployment (Vercel)
 
-`PUBLIC_*` vars are inlined at build time via SvelteKit's `$env/static/public`. On Vercel, set them in the project's Environment Variables — they will be available during the build.
+The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedules the cleanup cron.
 
-## Deploy to Vercel
+1. **Supabase**: create a project, add a public Storage bucket named `rooms`, and enable `INSERT` + `SELECT` policies for the `anon` role.
+2. **Vercel**: import the GitHub repo at [vercel.com/new](https://vercel.com/new). SvelteKit is auto-detected.
+3. **Environment variables** (Production + Preview):
 
-This project uses `@sveltejs/adapter-vercel` and ships with a `vercel.json` that runs `/api/cleanup` hourly via Vercel Cron.
+   | Name | Scope | Notes |
+   | --- | --- | --- |
+   | `PUBLIC_SUPABASE_URL` | Public, build-time | Inlined into the client bundle. |
+   | `PUBLIC_SUPABASE_ANON_KEY` | Public, build-time | Inlined into the client bundle. |
+   | `PUBLIC_SUPABASE_BUCKET` | Public, build-time | Default `rooms`. |
+   | `SUPABASE_SERVICE_ROLE_KEY` | Server-only | Used by `/api/cleanup`. |
+   | `ROOM_TTL_HOURS` | Server-only | Optional, default `24`. |
+   | `CRON_SECRET` | Server-only | Optional bearer-token gate for the cron endpoint. |
 
-### Option A — Vercel dashboard
+4. Deploy. Vercel will provision the cron automatically from `vercel.json`.
 
-1. Push the repo to GitHub.
-2. Import the repo at [vercel.com/new](https://vercel.com/new). Vercel auto-detects SvelteKit.
-3. Add the env vars listed above (Production + Preview).
-4. Deploy.
+---
 
-### Option B — Vercel CLI
+## Design decisions worth calling out
 
-```sh
-npm i -g vercel
-vercel link
-vercel env add PUBLIC_SUPABASE_URL
-vercel env add PUBLIC_SUPABASE_ANON_KEY
-vercel env add PUBLIC_SUPABASE_BUCKET
-vercel env add SUPABASE_SERVICE_ROLE_KEY
-vercel env add ROOM_TTL_HOURS
-vercel env add CRON_SECRET   # optional
-vercel --prod
-```
+- **No realtime, no websockets.** A 3-second poll is good enough for a slideshow that updates "every minute or two." Saved a dependency, simplified deployment, and keeps the client trivial to reason about.
+- **No database.** Folders in Supabase Storage are the data model. Listing a folder gives me an ordered file list with `created_at`; that's the entire host-mode read path.
+- **Phone-only music input.** Typing a YouTube URL on a TV remote is miserable. The TV view has no input fields at all — every piece of text is set from a phone.
+- **Public bucket + short TTL** instead of signed URLs. Tradeoff: anyone with the code can read/write, but the room evaporates within hours. Right call for ephemeral parties; explicitly wrong for anything sensitive.
+- **IndexedDB for solo.** Photos already live in the user's browser as `File` objects — IndexedDB is the obvious place to keep them. No server, no quota negotiation with the user.
+- **Client-side resize.** Capping at 1920×1080 JPEG gets photos under 250 KB on average. Uploads on hotel Wi-Fi went from "embarrassingly slow" to "instant."
 
-### Cleanup cron
-
-`vercel.json` schedules `GET /api/cleanup` at the top of every hour. The endpoint deletes objects in the `rooms` bucket older than `ROOM_TTL_HOURS`. Vercel Cron runs from a Vercel-managed origin; set `CRON_SECRET` to require an auth header. The endpoint also accepts `POST` for manual runs.
-
-## Architecture
-
-- `src/routes/host/` — TV page, generates room code, polls Supabase Storage for new uploads, plays slideshow with triple-buffer.
-- `src/routes/upload/` — phone page, client-side resize to 1920×1080 JPEG via canvas, upload to `room_<code>/` folder.
-- `src/routes/solo/` — IndexedDB-only editor (no backend).
-- `src/routes/play/` — solo fullscreen player with crossfade, paired-portrait layout, optional YouTube background music.
-- `src/routes/api/cleanup/` — deletes stale room folders.
+---
 
 ## Limitations
 
-- Anyone who guesses a 6-digit code can read/write to that room. Acceptable for short-lived parties; not for sensitive media.
-- Background music is YouTube-only — pick a track or playlist URL, it embeds via the YouTube iframe.
+- The 6-digit code is the only access control. Fine for parties, not for sensitive media.
+- Background music is YouTube-only — pick a track or playlist URL, it embeds via the YouTube iframe API. No audio file uploads, no Web Audio analysis, no beat sync.
+- The host browser must support `requestFullscreen()` and `OffscreenCanvas`. Most smart-TV browsers do; very old ones may need a desktop instead.
+
+---
 
 ## License
 
-MIT — feel free to fork and adapt for parties.
+MIT.
