@@ -222,71 +222,82 @@
 			return;
 		}
 
-		for (const file of Array.from(files)) {
-			const isImage = file.type.startsWith('image/');
-			const isVideo = file.type.startsWith('video/');
-			if (!isImage && !isVideo) continue;
+		const refresh = () => (items = [...items]);
 
-			const id = `tmp_${Math.random().toString(36).slice(2)}`;
-			const item: RoomItem = {
-				id,
-				label: file.name,
-				kind: isImage ? 'image' : 'video',
-				status: 'processing'
-			};
-			items = [...items, item];
-			const refresh = () => (items = [...items]);
+		const tasks = Array.from(files)
+			.filter((f) => f.type.startsWith('image/') || f.type.startsWith('video/'))
+			.map((file) => {
+				const isImage = file.type.startsWith('image/');
+				const id = `tmp_${Math.random().toString(36).slice(2)}`;
+				const item: RoomItem = {
+					id,
+					label: file.name,
+					kind: isImage ? 'image' : 'video',
+					status: 'processing'
+				};
+				items = [...items, item];
+				return { file, isImage, item };
+			});
 
-			try {
-				const stamp = Date.now().toString(36);
-				const rand = Math.random().toString(36).slice(2, 8);
+		await Promise.all(
+			tasks.map(async ({ file, isImage, item }) => {
+				try {
+					const stamp = Date.now().toString(36);
+					const rand = Math.random().toString(36).slice(2, 8);
 
-				let blob: Blob;
-				let contentType: string;
-				let ext: string;
+					let blob: Blob;
+					let contentType: string;
+					let ext: string;
 
-				if (isImage) {
-					const resized = await resizeForTV(file);
-					blob = resized.blob;
-					contentType = resized.mimeType;
-					ext = 'jpg';
-				} else {
-					const processed = await processVideo(file, (frac) => {
-						item.progress = frac;
-						refresh();
-					});
-					blob = processed.blob;
-					contentType = processed.mimeType;
-					ext = processed.ext;
-				}
+					if (isImage) {
+						const resized = await resizeForTV(file);
+						blob = resized.blob;
+						contentType = resized.mimeType;
+						ext = 'jpg';
+					} else {
+						const processed = await processVideo(file, (frac) => {
+							item.progress = frac;
+							refresh();
+						});
+						blob = processed.blob;
+						contentType = processed.mimeType;
+						ext = processed.ext;
+					}
 
-				item.status = 'uploading';
-				item.progress = undefined;
-				refresh();
+					item.status = 'uploading';
+					item.progress = undefined;
+					refresh();
 
-				const storageName = `${stamp}_${rand}.${ext}`;
-				const path = `${roomFolder(code)}/${storageName}`;
-				const { error } = await supa.storage
-					.from(SUPABASE_BUCKET)
-					.upload(path, blob, { contentType, upsert: false });
-				if (error) {
-					item.status = 'error';
-					item.error = error.message;
-				} else {
-					const { data: pub } = supa.storage
+					const storageName = `${stamp}_${rand}.${ext}`;
+					const path = `${roomFolder(code)}/${storageName}`;
+					const { error } = await supa.storage
 						.from(SUPABASE_BUCKET)
-						.getPublicUrl(path);
-					item.id = storageName;
-					item.storageName = storageName;
-					item.url = pub.publicUrl;
-					item.status = 'done';
+						.upload(path, blob, { contentType, upsert: false });
+					if (error) {
+						item.status = 'error';
+						item.error = error.message;
+					} else {
+						const { data: pub } = supa.storage
+							.from(SUPABASE_BUCKET)
+							.getPublicUrl(path);
+						item.id = storageName;
+						item.storageName = storageName;
+						item.url = pub.publicUrl;
+						item.status = 'done';
+						refresh();
+						try {
+							await writeOrder();
+						} catch {
+							/* best-effort; final writeOrder below will catch up */
+						}
+					}
+				} catch (e) {
+					item.status = 'error';
+					item.error = e instanceof Error ? e.message : String(e);
 				}
-			} catch (e) {
-				item.status = 'error';
-				item.error = e instanceof Error ? e.message : String(e);
-			}
-			refresh();
-		}
+				refresh();
+			})
+		);
 		if (inputEl) inputEl.value = '';
 		await writeOrder();
 	}
@@ -316,21 +327,35 @@
 		<section class="block">
 			<h2>Photos & videos</h2>
 			<p class="muted">
-				Pick photos or videos. Videos over 1080p are compressed in your browser before upload — that
-				takes about as long as the clip itself.
+				Videos over 1080p are compressed in your browser before upload — that takes about as long as
+				the clip itself.
 			</p>
-			<label class="file-input">
-				<input
-					type="file"
-					accept="image/*,video/*"
-					multiple
-					onchange={(e) => {
-						const el = e.currentTarget as HTMLInputElement;
-						onFiles(el.files, el);
-					}}
-				/>
-				<span>Choose photos or videos</span>
-			</label>
+			<div class="pick-row">
+				<label class="pick-btn">
+					<input
+						type="file"
+						accept="image/*"
+						multiple
+						onchange={(e) => {
+							const el = e.currentTarget as HTMLInputElement;
+							onFiles(el.files, el);
+						}}
+					/>
+					<span>📷 Add photos</span>
+				</label>
+				<label class="pick-btn">
+					<input
+						type="file"
+						accept="video/*"
+						multiple
+						onchange={(e) => {
+							const el = e.currentTarget as HTMLInputElement;
+							onFiles(el.files, el);
+						}}
+					/>
+					<span>🎬 Add videos</span>
+				</label>
+			</div>
 
 			{#if globalError}
 				<p class="global-error">⚠ {globalError}</p>
@@ -421,7 +446,7 @@
 					onclick={saveMusic}
 					disabled={!youtubeInput.trim() || musicState === 'saving'}
 				>
-					{musicState === 'saving' ? 'Sending…' : musicHasSaved ? 'Update' : 'Send to TV'}
+					{musicState === 'saving' ? 'Sending…' : musicHasSaved ? 'Update' : 'Send to host'}
 				</button>
 				{#if musicHasSaved}
 					<button class="secondary" onclick={clearMusic} disabled={musicState === 'saving'}>
@@ -524,21 +549,31 @@
 		display: flex;
 		gap: 0.5rem;
 	}
-	.file-input {
-		display: block;
-		cursor: pointer;
+	.pick-row {
+		display: flex;
+		gap: 0.5rem;
 		margin: 1rem 0;
 	}
-	.file-input input {
+	.pick-btn {
+		flex: 1;
+		display: block;
+		cursor: pointer;
+	}
+	.pick-btn input {
 		display: none;
 	}
-	.file-input span {
+	.pick-btn span {
 		display: block;
 		text-align: center;
-		padding: 1rem;
+		padding: 1rem 0.5rem;
 		border: 1px dashed #444;
 		border-radius: 6px;
 		background: #111;
+		font-size: 0.95rem;
+	}
+	.pick-btn:hover span {
+		background: #161616;
+		border-color: #555;
 	}
 	.global-error {
 		background: #2a1414;
