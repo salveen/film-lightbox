@@ -222,25 +222,33 @@
 			return;
 		}
 
-		const refresh = () => (items = [...items]);
-
 		const tasks = Array.from(files)
 			.filter((f) => f.type.startsWith('image/') || f.type.startsWith('video/'))
 			.map((file) => {
 				const isImage = file.type.startsWith('image/');
 				const id = `tmp_${Math.random().toString(36).slice(2)}`;
-				const item: RoomItem = {
+				const initial: RoomItem = {
 					id,
 					label: file.name,
 					kind: isImage ? 'image' : 'video',
 					status: 'processing'
 				};
-				items = [...items, item];
-				return { file, isImage, item };
+				items = [...items, initial];
+				let currentId = id;
+				const update = (patch: Partial<RoomItem>) => {
+					items = items.map((i) => (i.id === currentId ? { ...i, ...patch } : i));
+					if (patch.id) currentId = patch.id;
+				};
+				return { file, isImage, update };
 			});
 
-		await Promise.all(
-			tasks.map(async ({ file, isImage, item }) => {
+		const CONCURRENCY = 3;
+		let cursor = 0;
+		const worker = async () => {
+			while (true) {
+				const next = cursor++;
+				if (next >= tasks.length) return;
+				const { file, isImage, update } = tasks[next];
 				try {
 					const stamp = Date.now().toString(36);
 					const rand = Math.random().toString(36).slice(2, 8);
@@ -256,17 +264,14 @@
 						ext = 'jpg';
 					} else {
 						const processed = await processVideo(file, (frac) => {
-							item.progress = frac;
-							refresh();
+							update({ progress: frac });
 						});
 						blob = processed.blob;
 						contentType = processed.mimeType;
 						ext = processed.ext;
 					}
 
-					item.status = 'uploading';
-					item.progress = undefined;
-					refresh();
+					update({ status: 'uploading', progress: undefined });
 
 					const storageName = `${stamp}_${rand}.${ext}`;
 					const path = `${roomFolder(code)}/${storageName}`;
@@ -274,30 +279,24 @@
 						.from(SUPABASE_BUCKET)
 						.upload(path, blob, { contentType, upsert: false });
 					if (error) {
-						item.status = 'error';
-						item.error = error.message;
+						update({ status: 'error', error: error.message });
 					} else {
 						const { data: pub } = supa.storage
 							.from(SUPABASE_BUCKET)
 							.getPublicUrl(path);
-						item.id = storageName;
-						item.storageName = storageName;
-						item.url = pub.publicUrl;
-						item.status = 'done';
-						refresh();
-						try {
-							await writeOrder();
-						} catch {
-							/* best-effort; final writeOrder below will catch up */
-						}
+						update({
+							id: storageName,
+							storageName,
+							url: pub.publicUrl,
+							status: 'done'
+						});
 					}
 				} catch (e) {
-					item.status = 'error';
-					item.error = e instanceof Error ? e.message : String(e);
+					update({ status: 'error', error: e instanceof Error ? e.message : String(e) });
 				}
-				refresh();
-			})
-		);
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, worker));
 		if (inputEl) inputEl.value = '';
 		await writeOrder();
 	}
