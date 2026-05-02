@@ -1,21 +1,21 @@
 # Film Lightbox
 
+A shared photo slideshow for groups. One device runs the display; everyone else joins by entering a 6-digit code on their phone and uploading photos or short videos directly from their camera roll. No accounts, no app install. Built with SvelteKit, Supabase Storage, and deployed on Vercel.
+
+---
+
 Turn any screen into a living gallery. Anyone in the room — or across the country — can contribute photos and music to a shared slideshow using a 6-digit code. No apps to install, no accounts to create, no friction. Point a phone at the screen, enter the code, and your photos appear seconds later. Set the mood by syncing a YouTube soundtrack from your phone — the display picks it up automatically.
 
 <p align="center">
   <img src="assets/desktop_room.png" alt="Host screen slideshow" style="width:48%;max-width:420px;margin-right:8px;border:1px solid #eee;border-radius:6px" />
-  <img src="assets/phone_upload_room_filled.PNG" alt="Upload from phone" style="width:48%;max-width:420px;border:1px solid #eee;border-radius:6px" />
 </p>
 
 ---
 
 ## When to reach for it
 
-- **Parties & celebrations** — birthday, wedding, baby shower. Put the code on a card at the entrance; guests contribute photos throughout the night and they loop on the host screen in the background.
-- **Family reunions** — everyone uploads from their camera rolls, one screen becomes the shared memory.
-- **Remote gatherings** — stream the host screen while friends and family contribute from anywhere with an internet connection. The slideshow updates live for everyone watching.
-- **Memorials & tributes** — a quiet display of photos submitted by anyone who loved the person, no coordinator needed.
-- **Year in review** — New Year's Eve, graduation, end of year. Share the reel, add a playlist, let the room set the mood.
+- **Any gathering** — birthdays, family reunions, year-in-review nights. Share the code, everyone contributes from their camera roll, and the photos loop on the big screen in the background.
+- **Guess whose photo** — everyone drops one photo from their life anonymously; the room tries to guess the owner of each photo to its owner.
 - **Event photo walls** — conference hallways, office parties, school events. Guests see themselves on screen within seconds of uploading.
 
 ---
@@ -34,8 +34,6 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
 
 <img src="assets/desktop_room.png" alt="Empty host room waiting for uploads" width="100%" />
 
-*The host screen is now live and waiting. Tell guests the code verbally, write it on a card, or just point at the screen. No uploads yet — the slideshow starts the moment the first photo arrives.*
-
 ---
 
 **Step 3 — Guests open the same URL on their phones and enter the code**
@@ -45,7 +43,7 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
 <td width="50%"><img src="assets/phone_join_room.png" alt="Entering the room code" width="100%" /></td>
 </tr></table>
 
-*Tap **Upload** on the phone, type the 6-digit code from the screen, and you're in — no account, no app to install. Anyone with the code can join; the whole room contributes to the same session at the same time.*
+*Tap **Upload** on the phone, type the 6-digit code from the screen, and you're in. Anyone with the code can join; the whole room contributes to the same session at the same time.*
 
 ---
 
@@ -56,15 +54,13 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
 <td width="50%"><img src="assets/phone_upload_room_filled.png" alt="Photos selected and ready to upload" width="100%" /></td>
 </tr></table>
 
-*Pick photos from your camera roll. They're resized on the phone before leaving — even hotel Wi-Fi keeps up. You can also paste a YouTube link to set the background music; the host picks it up instantly and starts playing it for the whole room.*
+*Pick photos from your camera roll. You can also paste a YouTube link to set the background music which will be played during the slideshow.*
 
 ---
 
 **Step 5 — Photos appear on the host screen within seconds**
 
 <img src="assets/desktop_room_pics_uploaded.png" alt="Slideshow running with uploaded photos" width="100%" />
-
-*The host view refreshes every 3 seconds. As guests upload, photos fade into the slideshow automatically — no one needs to touch the host device.*
 
 ---
 
@@ -73,8 +69,7 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
 | Mode | URL | What it does |
 |------|-----|--------------|
 | **Host** | `/host` | Opens on the host device. Generates a 6-digit room code, polls for incoming uploads every 3 seconds, and runs the slideshow in fullscreen with smooth crossfade transitions. |
-| **Upload** | `/upload` | Guest view. Enter the room code, pick photos (resized client-side before upload), and optionally paste a YouTube link to set the background music — the host picks it up automatically. |
-| **Solo** | `/solo` | Offline editor and player. Photos and a YouTube link are stored in IndexedDB; works with no backend at all. Useful as a personal slideshow tool or when there's no internet. |
+| **Upload** | `/upload` | Guest view. Enter the room code, pick photos and short videos (both transcoded client-side before upload), and optionally paste a YouTube link to set the background music — the host picks it up automatically. |
 
 ---
 
@@ -83,10 +78,14 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
 ### Host / guest handshake
 
 ```
-┌─────────────┐                     ┌──────────────────┐                     ┌─────────────┐
-│   Phone     │  upload JPEG ──────▶│ Supabase bucket  │◀───── poll (3s) ────│    Host     │
-│  /upload    │  upsert URL  ──────▶│  room_<code>/    │                     │   /host     │
-└─────────────┘                     └──────────────────┘                     └─────────────┘
+┌─────────────┐                ┌────────────────────────────┐                ┌─────────────┐
+│   Phone     │   upload  ────▶│      Supabase Storage      │◀── list (3s) ──│    Host     │
+│  /upload    │               │  rooms/room_<code>/         │                │   /host     │
+└─────────────┘               │   ├── <ts>_<rand>.jpg/webm  │                └─────────────┘
+                              │   ├── youtube.txt   (music) │
+                              │   ├── order.txt     (queue) │
+                              │   └── host_word.txt (recovery)
+                              └────────────────────────────┘
                                           │
                                           │  daily Vercel Cron
                                           ▼
@@ -94,10 +93,13 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
                                     (deletes rooms older than ROOM_TTL_HOURS)
 ```
 
-- **Room codes** are 6-digit numbers generated in the browser. There's no auth — the code *is* the access token. Right for short-lived gatherings; not for sensitive media (see [Limitations](#limitations)).
-- **Photo uploads** are resized to 1920×1080 JPEG in an `OffscreenCanvas` before leaving the phone, so the network sees ~200 KB instead of 5 MB. Files are named `<timestamp>_<rand>.jpg` so the host's `created_at` sort gives a stable display order.
-- **Music sync** works via a single text file: the phone upserts `youtube.txt` with the URL, and the host's poller watches its `updated_at` timestamp. When it changes, the host re-fetches with a cache-busted URL and remounts the YouTube iframe — the embed swaps cleanly mid-slideshow.
-- **Session recovery** — each host session gets a randomly-generated safe word (e.g. `cedar`, `dusk`, `ember`). If the browser tab closes accidentally, the host can reopen their room by entering the 6-digit code and the word, without losing any uploaded photos.
+The whole app is a single Supabase Storage bucket. There is no database, no realtime channel, no auth — every piece of room state is a file in `room_<code>/`, and the host just lists that folder on a 3-second timer.
+
+- **Room codes** are 6-digit numbers generated in the browser. The code *is* the access token. Right for short-lived gatherings; not for sensitive media (see [Limitations](#limitations)).
+- **Photos & videos** are downscaled in the browser before upload — photos to 1920×1080 JPEG (~200 KB), videos re-encoded to a smaller WebM/MP4 — and stored as `<timestamp>_<rand>.<ext>`. The host's poll pulls in any new files it hasn't seen yet.
+- **Order** is tracked in `order.txt`. The phone rewrites it whenever a guest reorders or deletes an item, and the host respects that ordering on its next poll. New uploads not yet in the file fall to the end.
+- **Music** lives in `youtube.txt`. The phone upserts the URL; the same poll that picks up new photos notices the file's `updated_at` change, refetches it, and remounts the YouTube iframe so the track swaps mid-slideshow.
+- **Session recovery** — each host session generates a safe word (e.g. `cedar`, `dusk`, `ember`) and writes it to `host_word.txt`. If the browser tab closes, the host can reopen the room by entering the 6-digit code and the word; uploaded photos are still in the bucket.
 - **Cleanup** runs daily via Vercel Cron — `GET /api/cleanup` walks the bucket and deletes rooms older than `ROOM_TTL_HOURS`. Optionally gated by a `CRON_SECRET` bearer token.
 
 ### The player
@@ -105,11 +107,7 @@ Turn any screen into a living gallery. Anyone in the room — or across the coun
 - **Triple-buffered** — only the current and next slide nodes are in the DOM at any time, so low-powered browsers on older devices don't run out of memory on a 200-photo deck.
 - **Crossfade** is driven by `requestAnimationFrame` and `performance.now()`, not CSS transitions, so seeking forward or backward with arrow keys is instant.
 - **Keyboard controls** (when the slideshow is running): `←` / `→` to navigate, `Space` to pause, `F` to toggle fullscreen, `Esc` to exit.
-- **Portrait pairing** — consecutive portrait photos are automatically grouped side-by-side.
-
-### Solo mode
-
-Same player, different source: `loadProject()` from IndexedDB instead of polling Supabase. Photo blobs are stored directly in the browser; no server involved.
+- **Mixed media** — images and short videos share the same queue; videos play through before advancing.
 
 ---
 
@@ -118,20 +116,17 @@ Same player, different source: `loadProject()` from IndexedDB instead of polling
 ```
 src/
 ├── lib/
-│   ├── db.ts              IndexedDB schema + photo/project operations (solo mode)
 │   ├── supabase.ts        Browser Supabase client (anon key)
 │   ├── server/supabase.ts Server Supabase client (service role, used only by /api/cleanup)
 │   ├── roomCode.ts        6-digit code generation + validation
 │   ├── roomWord.ts        Safe-word list for host session recovery
-│   ├── resizeImage.ts     OffscreenCanvas → JPEG pipeline (1920×1080 cap)
-│   ├── youtube.ts         URL → video ID parsing, embed URL builder
-│   └── slides.ts          Photo array → slide list (handles portrait pairing)
+│   ├── resizeImage.ts     In-browser photo resize to 1920×1080 JPEG
+│   ├── processVideo.ts    In-browser video re-encode (WebM/MP4)
+│   └── youtube.ts         URL → video ID parsing, embed URL builder
 └── routes/
     ├── +page.svelte       Landing page (mode picker)
     ├── host/              Host view: room code, polling, fullscreen player
-    ├── upload/            Phone view: photo + music input
-    ├── solo/              Offline editor
-    ├── play/              Solo fullscreen player
+    ├── upload/            Phone view: photo/video + music input
     └── api/cleanup/       Daily TTL sweep (POST manual / GET cron)
 ```
 
@@ -147,7 +142,7 @@ pnpm dev
 # open http://localhost:5173
 ```
 
-Solo mode works zero-config. For host/upload mode, copy `.env.example` → `.env` and fill in your Supabase credentials.
+Copy `.env.example` → `.env` and fill in your Supabase credentials before running.
 
 ```sh
 pnpm check     # type-check
@@ -184,9 +179,8 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
 |-------|--------|-----|
 | Framework | **SvelteKit 2** + **Svelte 5 (runes)** | Tiny bundle, file-based routing, and `$state` / `$derived` make the slideshow timing logic readable. |
 | Language | **TypeScript** | Strong types across DB schemas and Supabase responses. |
-| Storage (shared) | **Supabase Storage** | One public bucket per environment; rooms are folders (`room_<code>/`). No relational data needed, so Postgres is skipped entirely. |
-| Storage (local) | **IndexedDB** via `idb` | Solo mode persists the entire project — photo blobs, ordering, settings — without a server. |
-| Image pipeline | **OffscreenCanvas** + `createImageBitmap` | Photos are resized to 1920×1080 JPEG on the phone before upload, so the network sees ~200 KB instead of 5 MB. |
+| Storage | **Supabase Storage** | One public bucket per environment; rooms are folders (`room_<code>/`). No relational data needed, so Postgres is skipped entirely. |
+| Media pipeline | **Browser-native canvas + `MediaRecorder`** | Photos resized to 1920×1080 JPEG (~200 KB); videos re-encoded to WebM (or MP4 fallback) before upload. Saves bandwidth on hotel Wi-Fi and keeps host playback consistent. |
 | Hosting | **Vercel** (`@sveltejs/adapter-vercel`) | Static client + serverless `/api/*` routes + Vercel Cron for cleanup. |
 | Background music | **YouTube IFrame embed** | No licensing headaches, no audio files to host. Guest sends a URL, host embeds it. |
 
@@ -198,7 +192,7 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
 - **No database.** Folders in Supabase Storage *are* the data model. Listing a folder gives an ordered file list with `created_at`; that's the entire host-mode read path.
 - **Guest-only music input.** Typing a YouTube URL with a remote control is miserable. The host view has no text input at all — everything is set from a guest device.
 - **Public bucket + short TTL** instead of signed URLs. Tradeoff: anyone with the code can read/write, but the room evaporates within hours. Right for ephemeral parties; explicitly wrong for sensitive media.
-- **Client-side resize.** Capping uploads at 1920×1080 JPEG gets photos under 250 KB on average. Uploads on hotel Wi-Fi went from embarrassingly slow to near-instant.
+- **Client-side resize.** Capping uploads at 1920×1080 JPEG gets photos under 250 KB on average, and videos are similarly re-encoded before upload. Uploads on hotel Wi-Fi went from embarrassingly slow to near-instant.
 
 ---
 
@@ -206,7 +200,7 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
 
 - The 6-digit code is the only access control. Fine for parties, not for sensitive media.
 - Background music is YouTube-only — paste a track or playlist URL and it embeds via the YouTube iframe API. No audio file uploads.
-- The host browser must support `requestFullscreen()` and `OffscreenCanvas`. Most modern browsers do; very old or embedded devices may need a desktop browser instead.
+- The host browser must support fullscreen and the guest browser needs working canvas + `MediaRecorder` APIs to compress uploads. Most modern browsers do; very old or embedded devices may need a desktop browser instead.
 
 ---
 
