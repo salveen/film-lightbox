@@ -1,15 +1,9 @@
 # Film Lightbox
+You can't always bring your friends and family with you, be it a club or a trip. But with Film Lightbox you can always make them feel like they were part of the experience. 
 
-A shared photo slideshow for groups. One device runs the display; everyone else joins by entering a 6-digit code on their phone and uploading photos or short videos directly from their camera roll. No accounts, no app install. Built with SvelteKit, Supabase Storage, and deployed on Vercel.
+Film Lightbox is a shared photo slideshow for friends. One device acts as a display; everyone else joins by entering a 6-digit code on their phone and uploading photos or short videos directly from their camera roll. No accounts, no app install. Built with SvelteKit, Supabase Storage, and deployed on Vercel.
 
----
-
-Turn any screen into a living gallery. Anyone in the room — or across the country — can contribute photos and music to a shared slideshow using a 6-digit code. No apps to install, no accounts to create, no friction. Point a phone at the screen, enter the code, and your photos appear seconds later. Set the mood by syncing a YouTube soundtrack from your phone — the display picks it up automatically.
-
-<p align="center">
-  <img src="assets/desktop_room.png" alt="Host screen slideshow" style="width:48%;max-width:420px;margin-right:8px;border:1px solid #eee;border-radius:6px" />
-</p>
-
+<img src="assets/slideshow.png" alt="Slideshow" width="100%" />
 ---
 
 ## When to reach for it
