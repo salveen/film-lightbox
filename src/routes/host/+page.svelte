@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { generateRoomCode } from '$lib/roomCode';
+	import { generateRoomWord } from '$lib/roomWord';
 	import { getSupabase, roomFolder, SUPABASE_BUCKET } from '$lib/supabase';
 	import { extractVideoId, embedUrl } from '$lib/youtube';
 
@@ -42,7 +43,15 @@
 		}
 	}
 
+	const HOST_WORD_FILE = 'host_word.txt';
+	const LS_KEY = 'filmbox_room';
+
 	let code = $state('');
+	let word = $state('');
+	let recovering = $state(false);
+	let recoverCode = $state('');
+	let recoverWord = $state('');
+	let recoverError = $state('');
 	let queue = $state<SlideItem[]>([]);
 	let started = $state(false);
 	let currentIndex = $state(0);
@@ -229,8 +238,72 @@
 		}
 	}
 
-	onMount(() => {
+	async function uploadHostWord(roomCode: string, roomWord: string) {
+		try {
+			const supa = getSupabase();
+			const path = `${roomFolder(roomCode)}/${HOST_WORD_FILE}`;
+			const blob = new Blob([roomWord], { type: 'text/plain' });
+			await supa.storage.from(SUPABASE_BUCKET).upload(path, blob, { contentType: 'text/plain', upsert: true });
+		} catch {
+			/* non-fatal */
+		}
+	}
+
+	function newRoom() {
+		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+		queue = [];
+		videoId = undefined;
+		lastMusicSig = undefined;
 		code = generateRoomCode();
+		word = generateRoomWord();
+		localStorage.setItem(LS_KEY, JSON.stringify({ code, word }));
+		void uploadHostWord(code, word);
+		listExisting();
+		startPolling();
+	}
+
+	async function recover() {
+		recoverError = '';
+		const trimCode = recoverCode.trim();
+		const trimWord = recoverWord.trim().toLowerCase();
+		if (!trimCode || !trimWord) return;
+		try {
+			const supa = getSupabase();
+			const path = `${roomFolder(trimCode)}/${HOST_WORD_FILE}`;
+			const { data: pub } = supa.storage.from(SUPABASE_BUCKET).getPublicUrl(path);
+			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
+			if (!res.ok) { recoverError = 'Room not found'; return; }
+			const stored = (await res.text()).trim().toLowerCase();
+			if (stored !== trimWord) { recoverError = 'Room not found'; return; }
+			code = trimCode;
+			word = trimWord;
+			localStorage.setItem(LS_KEY, JSON.stringify({ code, word }));
+			recovering = false;
+			listExisting();
+			startPolling();
+		} catch {
+			recoverError = 'Room not found';
+		}
+	}
+
+	onMount(() => {
+		const saved = localStorage.getItem(LS_KEY);
+		if (saved) {
+			try {
+				const parsed = JSON.parse(saved) as { code?: string; word?: string };
+				if (parsed.code && parsed.word) {
+					code = parsed.code;
+					word = parsed.word;
+					listExisting();
+					startPolling();
+					return;
+				}
+			} catch { /* ignore */ }
+		}
+		code = generateRoomCode();
+		word = generateRoomWord();
+		localStorage.setItem(LS_KEY, JSON.stringify({ code, word }));
+		void uploadHostWord(code, word);
 		listExisting();
 		startPolling();
 	});
@@ -257,22 +330,58 @@
 <div class="host" bind:this={containerEl} class:light={started}>
 	{#if !started}
 		<div class="lobby">
-			<h1>Room <span class="code">{code}</span></h1>
-			<p class="muted">
-				On your phone: open this site → "Upload from phone" → enter code <strong>{code}</strong>
-			</p>
+			{#if recovering}
+				<h1>Recover session</h1>
+				<div class="recover-form">
+					<input
+						type="tel"
+						inputmode="numeric"
+						placeholder="Room code"
+						maxlength="6"
+						bind:value={recoverCode}
+						class="recover-input"
+					/>
+					<input
+						type="text"
+						placeholder="Session word"
+						maxlength="20"
+						bind:value={recoverWord}
+						class="recover-input"
+						oninput={(e) => (recoverWord = e.currentTarget.value.toLowerCase())}
+					/>
+					<div class="recover-actions">
+						<button class="primary" onclick={recover}>Recover</button>
+						<button onclick={() => { recovering = false; recoverError = ''; }}>Cancel</button>
+					</div>
+					{#if recoverError}
+						<p class="recover-error">{recoverError}</p>
+					{/if}
+				</div>
+			{:else}
+				<h1>Room <span class="code">{code}</span></h1>
+				<p class="word-label">session word: <strong class="word">{word}</strong></p>
+				<p class="muted">
+					On your phone: open this site → "Upload from phone" → enter code <strong>{code}</strong>
+				</p>
 
-			<p class="status photos">
-				{queue.length} item{queue.length === 1 ? '' : 's'} ready
-			</p>
-			<p class="status music" class:on={!!videoId}>
-				{videoId ? '🎵 Music linked from phone' : '🎵 No music yet — add a YouTube link from your phone'}
-			</p>
+				<p class="status photos">
+					{queue.length} item{queue.length === 1 ? '' : 's'} ready
+				</p>
+				<p class="status music" class:on={!!videoId}>
+					{videoId ? '🎵 Music linked from phone' : '🎵 No music yet — add a YouTube link from your phone'}
+				</p>
 
-			<button class="primary big" onclick={start} disabled={queue.length === 0}>
-				▶ Start slideshow
-			</button>
-			<p class="muted small">→ ← navigate · space pause · f fullscreen · esc exit</p>
+				<button class="primary big" onclick={start} disabled={queue.length === 0}>
+					▶ Start slideshow
+				</button>
+				<p class="muted small">→ ← navigate · space pause · f fullscreen · esc exit</p>
+				<div class="lobby-links">
+					<button class="link-btn" onclick={() => { recovering = true; recoverCode = ''; recoverWord = ''; recoverError = ''; }}>
+						Lost session? Recover
+					</button>
+					<button class="link-btn" onclick={newRoom}>Start new room</button>
+				</div>
+			{/if}
 		</div>
 	{:else}
 		{#each queue as item, i (item.name)}
@@ -435,5 +544,61 @@
 	}
 	.slide {
 		z-index: 1;
+	}
+	.word-label {
+		color: #888;
+		margin: 0;
+		font-size: 0.95rem;
+		letter-spacing: 0.05em;
+	}
+	.word {
+		color: #ddd;
+		font-family: ui-monospace, monospace;
+		font-weight: 500;
+		letter-spacing: 0.1em;
+	}
+	.recover-form {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		align-items: center;
+		min-width: 16rem;
+	}
+	.recover-input {
+		padding: 0.6rem 0.8rem;
+		background: #161616;
+		color: #eee;
+		border: 1px solid #444;
+		border-radius: 6px;
+		font-size: 1rem;
+		width: 100%;
+		text-align: center;
+		font-family: ui-monospace, monospace;
+	}
+	.recover-actions {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.recover-error {
+		color: #d66;
+		margin: 0;
+		font-size: 0.9rem;
+	}
+	.lobby-links {
+		display: flex;
+		gap: 1rem;
+		margin-top: 1.5rem;
+	}
+	.link-btn {
+		background: transparent;
+		border: none;
+		color: #888;
+		font-size: 0.85rem;
+		text-decoration: underline;
+		cursor: pointer;
+		padding: 0.25rem 0.5rem;
+	}
+	.link-btn:hover {
+		color: #ccc;
 	}
 </style>

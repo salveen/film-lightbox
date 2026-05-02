@@ -20,17 +20,14 @@ async function runCleanup() {
 		const { data: files } = await supa.storage
 			.from(SUPABASE_BUCKET)
 			.list(folder.name, { limit: 1000 });
-		if (!files) continue;
-		const stale = files
-			.filter((f) => {
-				const t = f.created_at ? Date.parse(f.created_at) : Date.now();
-				return t < cutoff;
-			})
-			.map((f) => `${folder.name}/${f.name}`);
-		if (stale.length > 0) {
-			const { error: delErr } = await supa.storage.from(SUPABASE_BUCKET).remove(stale);
-			if (!delErr) deleted += stale.length;
-		}
+		if (!files || files.length === 0) continue;
+		const oldest = Math.min(
+			...files.map((f) => (f.created_at ? Date.parse(f.created_at) : Date.now()))
+		);
+		if (oldest >= cutoff) continue;
+		const paths = files.map((f) => `${folder.name}/${f.name}`);
+		const { error: delErr } = await supa.storage.from(SUPABASE_BUCKET).remove(paths);
+		if (!delErr) deleted += paths.length;
 	}
 
 	return json({ deleted, ttlHours: TTL_HOURS });
