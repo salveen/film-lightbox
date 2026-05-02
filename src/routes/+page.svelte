@@ -9,7 +9,7 @@
 <main>
 	<header>
 		<h1>Film Lightbox</h1>
-		<p class="muted">A photo + music slideshow for your TV.</p>
+		<p class="muted">A photo + music slideshow for any screen.</p>
 	</header>
 
 	<section class="modes">

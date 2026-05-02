@@ -180,7 +180,7 @@
 				return;
 			}
 			musicState = 'saved';
-			musicMessage = '✓ Music sent to the TV';
+			musicMessage = '✓ Music sent to the host';
 			musicHasSaved = true;
 		} catch (e) {
 			musicState = 'error';
@@ -309,7 +309,7 @@
 <main>
 	{#if !joined}
 		<h1>Join a room</h1>
-		<p class="muted">Enter the 6-digit code shown on the TV.</p>
+		<p class="muted">Enter the 6-digit code shown on the host screen.</p>
 		<input
 			type="tel"
 			inputmode="numeric"
