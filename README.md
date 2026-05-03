@@ -56,6 +56,8 @@ Film Lightbox is a shared photo slideshow for friends. One device acts as a disp
 
 <img src="assets/desktop_room_pics_uploaded.png" alt="Slideshow running with uploaded photos" width="100%" />
 
+**Step 6 — Press Start Slideshow**
+The slideshow is now running.
 ---
 
 ## Modes
@@ -74,17 +76,17 @@ Film Lightbox is a shared photo slideshow for friends. One device acts as a disp
 ```
 ┌─────────────┐                ┌────────────────────────────┐                ┌─────────────┐
 │   Phone     │   upload  ────▶│      Supabase Storage      │◀── list (3s) ──│    Host     │
-│  /upload    │               │  rooms/room_<code>/         │                │   /host     │
-└─────────────┘               │   ├── <ts>_<rand>.jpg/webm  │                └─────────────┘
-                              │   ├── youtube.txt   (music) │
-                              │   ├── order.txt     (queue) │
-                              │   └── host_word.txt (recovery)
-                              └────────────────────────────┘
+│  /upload    │                │ rooms/room_<code>/         │                │   /host     │
+└─────────────┘                │  ├── <ts>_<rand>.jpg/webm  │                └─────────────┘
+                               │  ├── youtube.txt   (music) │
+                               │  ├── order.txt     (queue) │
+                               │  └── host_word.txt (recovery)
+                               └────────────────────────────┘
                                           │
                                           │  daily Vercel Cron
                                           ▼
                                     /api/cleanup
-                                    (deletes rooms older than ROOM_TTL_HOURS)
+                                    (deletes rooms oler than 24 hours)
 ```
 
 The whole app is a single Supabase Storage bucket. There is no database, no realtime channel, no auth — every piece of room state is a file in `room_<code>/`, and the host just lists that folder on a 3-second timer.
@@ -94,15 +96,8 @@ The whole app is a single Supabase Storage bucket. There is no database, no real
 - **Order** is tracked in `order.txt`. The phone rewrites it whenever a guest reorders or deletes an item, and the host respects that ordering on its next poll. New uploads not yet in the file fall to the end.
 - **Music** lives in `youtube.txt`. The phone upserts the URL; the same poll that picks up new photos notices the file's `updated_at` change, refetches it, and remounts the YouTube iframe so the track swaps mid-slideshow.
 - **Session recovery** — each host session generates a safe word (e.g. `cedar`, `dusk`, `ember`) and writes it to `host_word.txt`. If the browser tab closes, the host can reopen the room by entering the 6-digit code and the word; uploaded photos are still in the bucket.
-- **Cleanup** runs daily via Vercel Cron — `GET /api/cleanup` walks the bucket and deletes rooms older than `ROOM_TTL_HOURS`. Optionally gated by a `CRON_SECRET` bearer token.
-
+- **Cleanup** runs daily via Vercel Cron — `GET /api/cleanup` walks the bucket and deletes rooms older than 24 hours.
 ### The player
-
-- **Triple-buffered** — only the current and next slide nodes are in the DOM at any time, so low-powered browsers on older devices don't run out of memory on a 200-photo deck.
-- **Crossfade** is driven by `requestAnimationFrame` and `performance.now()`, not CSS transitions, so seeking forward or backward with arrow keys is instant.
-- **Keyboard controls** (when the slideshow is running): `←` / `→` to navigate, `Space` to pause, `F` to toggle fullscreen, `Esc` to exit.
-- **Mixed media** — images and short videos share the same queue; videos play through before advancing.
-
 ---
 
 ## Project structure
@@ -138,11 +133,6 @@ pnpm dev
 
 Copy `.env.example` → `.env` and fill in your Supabase credentials before running.
 
-```sh
-pnpm check     # type-check
-pnpm build     # production build
-pnpm preview   # serve the build locally
-```
 
 ---
 
@@ -160,8 +150,6 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
    | `PUBLIC_SUPABASE_ANON_KEY` | Public, build-time | Inlined into the client bundle. |
    | `PUBLIC_SUPABASE_BUCKET` | Public, build-time | Default `rooms`. |
    | `SUPABASE_SERVICE_ROLE_KEY` | Server-only | Used by `/api/cleanup`. |
-   | `ROOM_TTL_HOURS` | Server-only | Optional, default `24`. |
-   | `CRON_SECRET` | Server-only | Optional bearer-token gate for the cron endpoint. |
 
 4. Deploy. Vercel provisions the cron automatically from `vercel.json`.
 
@@ -171,7 +159,7 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
 
 | Layer | Choice | Why |
 |-------|--------|-----|
-| Framework | **SvelteKit 2** + **Svelte 5 (runes)** | Tiny bundle, file-based routing, and `$state` / `$derived` make the slideshow timing logic readable. |
+| Framework | **SvelteKit 2** + **Svelte 5** | Tiny bundle, file-based routing, and `$state` / `$derived` make the slideshow timing logic readable. |
 | Language | **TypeScript** | Strong types across DB schemas and Supabase responses. |
 | Storage | **Supabase Storage** | One public bucket per environment; rooms are folders (`room_<code>/`). No relational data needed, so Postgres is skipped entirely. |
 | Media pipeline | **Browser-native canvas + `MediaRecorder`** | Photos resized to 1920×1080 JPEG (~200 KB); videos re-encoded to WebM (or MP4 fallback) before upload. Saves bandwidth on hotel Wi-Fi and keeps host playback consistent. |
@@ -184,9 +172,8 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
 
 - **No realtime, no WebSockets.** A 3-second poll is good enough for a slideshow that updates every minute or two. Fewer dependencies, simpler deployment, trivial to reason about.
 - **No database.** Folders in Supabase Storage *are* the data model. Listing a folder gives an ordered file list with `created_at`; that's the entire host-mode read path.
-- **Guest-only music input.** Typing a YouTube URL with a remote control is miserable. The host view has no text input at all — everything is set from a guest device.
-- **Public bucket + short TTL** instead of signed URLs. Tradeoff: anyone with the code can read/write, but the room evaporates within hours. Right for ephemeral parties; explicitly wrong for sensitive media.
-- **Client-side resize.** Capping uploads at 1920×1080 JPEG gets photos under 250 KB on average, and videos are similarly re-encoded before upload. Uploads on hotel Wi-Fi went from embarrassingly slow to near-instant.
+- **Public bucket + short TTL** instead of signed URLs. Tradeoff: anyone with the code can read/write, but the room evaporates in 24 hours. Should not be used for sensitive media, but fine for parties and gatherings.
+- **Client-side resize.** Capping uploads at 1920×1080 JPEG gets photos under 250 KB on average, and videos are similarly re-encoded before upload.
 
 ---
 
@@ -194,8 +181,6 @@ The repo ships with `@sveltejs/adapter-vercel` and a `vercel.json` that schedule
 
 - The 6-digit code is the only access control. Fine for parties, not for sensitive media.
 - Background music is YouTube-only — paste a track or playlist URL and it embeds via the YouTube iframe API. No audio file uploads.
-- The host browser must support fullscreen and the guest browser needs working canvas + `MediaRecorder` APIs to compress uploads. Most modern browsers do; very old or embedded devices may need a desktop browser instead.
-
 ---
 
 ## License
