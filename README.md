@@ -3,7 +3,7 @@ You can't always bring your friends and family with you, be it a club or a trip.
 
 Film Lightbox is a shared photo slideshow for friends. One device acts as a display; everyone else joins by entering a 6-digit code on their phone and uploading photos or short videos directly from their camera roll. No accounts, no app install. Built with SvelteKit, Supabase Storage, and deployed on Vercel.
 
-<img src="assets/slideshow.png" alt="Slideshow" width="100%" />
+<img src="assets/slideshow.jpg" alt="Slideshow" width="100%" />
 ---
 
 ## When to reach for it
