@@ -1,12 +1,14 @@
 # Film Lightbox
-You can't always bring your friends and family with you, be it a club or a trip. But with Film Lightbox you can always make them feel like they were part of the experience. 
+You can't always bring your friends and family with you, whether it's a trip or a night out. But with Film Lightbox you can always make them feel like they were part of the experience. 
 
-Film Lightbox is a shared photo slideshow for friends. One device acts as a display; everyone else joins by entering a 6-digit code on their phone and uploading photos or short videos directly from their camera roll. Guests can also drop a YouTube link to set the background music. No accounts, no app install. Built with SvelteKit, Supabase Storage, and deployed on Vercel.
+Film Lightbox is a shared photo slideshow for a gathering. One device acts as a display; everyone else joins by entering a 6-digit code on their phone and uploading photos directly from their camera roll. Guests can also drop a YouTube link to set the background music. No accounts, no app install. Built with SvelteKit, Supabase Storage, and deployed on Vercel.
 
+
+**Live at [film-lightbox.vercel.app](https://film-lightbox.vercel.app/)**
 
 <img src="assets/slideshow.jpg" alt="Slideshow" width="100%" />
 
-**Live at [film-lightbox.vercel.app](https://film-lightbox.vercel.app/)**
+The original idea was to build this as a way to revisit film photos after trips. Hence the name "Film Lightbox".
 
 ---
 
@@ -17,6 +19,7 @@ Film Lightbox is a shared photo slideshow for friends. One device acts as a disp
 - **Event photo walls** — conference hallways, office parties, school events. Guests see themselves on screen within seconds of uploading.
 
 ---
+
 
 ## Walkthrough
 
