@@ -144,6 +144,7 @@
 			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
 			if (!res.ok) return;
 			const txt = (await res.text()).trim();
+			if (txt !== selectedPreset) selectedPreset = '';
 			const id = extractVideoId(txt);
 			videoId = id ?? undefined;
 		} catch (e) {
