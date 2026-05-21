@@ -435,6 +435,7 @@
 		color: #eee;
 		overflow: hidden;
 		font-family: ui-sans-serif, system-ui, sans-serif;
+		color-scheme: light;
 	}
 	.host {
 		position: fixed;
@@ -445,6 +446,7 @@
 	.host.light {
 		background: #fff;
 		color: #000;
+		color-scheme: light;
 	}
 	.lobby {
 		position: absolute;
