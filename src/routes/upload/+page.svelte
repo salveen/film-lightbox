@@ -225,7 +225,10 @@
 		try {
 			const supa = getSupabase();
 			const path = `${roomFolder(code)}/${MUSIC_FILE}`;
-			const { error } = await supa.storage.from(SUPABASE_BUCKET).remove([path]);
+			const blob = new Blob([''], { type: 'text/plain' });
+			const { error } = await supa.storage
+				.from(SUPABASE_BUCKET)
+				.upload(path, blob, { contentType: 'text/plain', upsert: true });
 			if (error) {
 				musicState = 'error';
 				musicMessage = error.message;

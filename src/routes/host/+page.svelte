@@ -5,6 +5,7 @@
 	import { generateRoomWord } from '$lib/roomWord';
 	import { getSupabase, roomFolder, SUPABASE_BUCKET } from '$lib/supabase';
 	import { extractVideoId, embedUrl } from '$lib/youtube';
+	import { PRESET_SONGS } from '$lib/presetSongs';
 
 	const SLIDE_MS = 5000;
 	const TRANSITION_MS = 800;
@@ -62,6 +63,7 @@
 	let nextIndex = $state<number | null>(null);
 	let transitionAt = $state(0);
 	let videoId = $state<string | undefined>(undefined);
+	let selectedPreset = $state<string>('');
 	let paused = $state(false);
 	let containerEl: HTMLDivElement | undefined = $state();
 
@@ -151,6 +153,40 @@
 
 	function startPolling() {
 		pollTimer = setInterval(listExisting, 1000);
+	}
+
+	async function setHostMusic(url: string) {
+		if (!extractVideoId(url)) return;
+		try {
+			const supa = getSupabase();
+			const path = `${roomFolder(code)}/${MUSIC_FILE}`;
+			const blob = new Blob([url], { type: 'text/plain' });
+			await supa.storage
+				.from(SUPABASE_BUCKET)
+				.upload(path, blob, { contentType: 'text/plain', upsert: true });
+		} catch (e) {
+			console.warn('failed to set host music', e);
+		}
+	}
+
+	async function clearHostMusic() {
+		try {
+			const supa = getSupabase();
+			const path = `${roomFolder(code)}/${MUSIC_FILE}`;
+			const blob = new Blob([''], { type: 'text/plain' });
+			await supa.storage
+				.from(SUPABASE_BUCKET)
+				.upload(path, blob, { contentType: 'text/plain', upsert: true });
+			selectedPreset = '';
+		} catch (e) {
+			console.warn('failed to clear host music', e);
+		}
+	}
+
+	function onPresetChange(e: Event) {
+		const url = (e.currentTarget as HTMLSelectElement).value;
+		selectedPreset = url;
+		if (url) void setHostMusic(url);
 	}
 
 	function startRealtime() {
@@ -415,15 +451,33 @@
 				<h1>Room <span class="code">{code}</span></h1>
 				<p class="word-label">session word: <strong class="word">{word}</strong></p>
 				<p class="muted">
-					On your phone: open this site → "Upload from phone" → enter code <strong>{code}</strong>
+					On your phone: open this site → "Upload from phone" → enter code above
 				</p>
 
 				<p class="status photos">
 					{queue.length} item{queue.length === 1 ? '' : 's'} ready
 				</p>
 				<p class="status music" class:on={!!videoId}>
-					{videoId ? '🎵 Music linked from phone' : '🎵 No music yet — add a YouTube link from your phone'}
+					{videoId ? '🎵 Music linked' : '🎵 No music yet — add a YouTube link on your phone or from dropdown'}
 				</p>
+
+				{#if PRESET_SONGS.length > 0}
+					<div class="preset-music">
+						<select
+							class="preset-select"
+							bind:value={selectedPreset}
+							onchange={onPresetChange}
+						>
+							<option value="">Choose a preset song…</option>
+							{#each PRESET_SONGS as song}
+								<option value={song.url}>{song.label}</option>
+							{/each}
+						</select>
+						{#if videoId}
+							<button class="clear-btn" onclick={clearHostMusic}>Clear</button>
+						{/if}
+					</div>
+				{/if}
 
 				<button class="primary big" onclick={start} disabled={queue.length === 0}>
 					▶ Start slideshow
@@ -546,6 +600,21 @@
 	}
 	.status.music.on {
 		color: #6c6;
+	}
+	.preset-music {
+		display: flex;
+		gap: 0.5rem;
+		margin: 0.5rem 0;
+		justify-content: center;
+	}
+	.preset-select {
+		padding: 0.6rem 1.2rem;
+		border: 1px solid #444;
+		background: #161616;
+		color: #eee;
+		border-radius: 6px;
+		cursor: pointer;
+		font: inherit;
 	}
 	button {
 		padding: 0.6rem 1.2rem;
