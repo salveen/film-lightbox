@@ -313,6 +313,21 @@
 		if (rafId !== null) cancelAnimationFrame(rafId);
 	});
 
+	$effect(() => {
+		if (typeof document === 'undefined') return;
+		const html = document.documentElement;
+		const body = document.body;
+		if (started) {
+			html.style.setProperty('background-color', '#ffffff', 'important');
+			body.style.setProperty('background-color', '#ffffff', 'important');
+			html.style.setProperty('color-scheme', 'only light', 'important');
+		} else {
+			html.style.removeProperty('background-color');
+			body.style.removeProperty('background-color');
+			html.style.removeProperty('color-scheme');
+		}
+	});
+
 	const visibleIndices = $derived.by(() => {
 		if (queue.length === 0) return new Set<number>();
 		const set = new Set<number>([currentIndex]);
@@ -435,18 +450,22 @@
 		color: #eee;
 		overflow: hidden;
 		font-family: ui-sans-serif, system-ui, sans-serif;
-		color-scheme: light;
+		color-scheme: only light;
+		forced-color-adjust: none;
 	}
 	.host {
 		position: fixed;
 		inset: 0;
+		width: 100vw;
+		height: 100vh;
 		background: #000;
 	}
 
 	.host.light {
-		background: #fff;
+		background: #ffffff !important;
 		color: #000;
-		color-scheme: light;
+		color-scheme: only light;
+		forced-color-adjust: none;
 	}
 	.lobby {
 		position: absolute;
@@ -519,15 +538,14 @@
 		justify-content: center;
 		background: #000;
 	}
+	.host.light .slide {
+		background: #ffffff !important;
+	}
 	.slide img,
 	.slide video {
 		max-width: 100%;
 		max-height: 100%;
 		object-fit: contain;
-	}
-
-	.host.light .slide {
-		background: #fff;
 	}
 
 	.host.light .slide img,
