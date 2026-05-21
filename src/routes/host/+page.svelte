@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import type { RealtimeChannel } from '@supabase/supabase-js';
 	import { generateRoomCode } from '$lib/roomCode';
 	import { generateRoomWord } from '$lib/roomWord';
 	import { getSupabase, roomFolder, SUPABASE_BUCKET } from '$lib/supabase';
@@ -32,7 +33,9 @@
 			const { data: pub } = supa.storage
 				.from(SUPABASE_BUCKET)
 				.getPublicUrl(`${roomFolder(code)}/${ORDER_FILE}`);
-			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
+			// Unique URL each call → CDN cache miss every time.
+			// cache:'no-store' → browser never caches the response either.
+			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`, { cache: 'no-store' });
 			if (!res.ok) return [];
 			return (await res.text())
 				.split('\n')
@@ -45,6 +48,7 @@
 
 	const HOST_WORD_FILE = 'host_word.txt';
 	const LS_KEY = 'filmbox_room';
+	const lsOrderKey = (c: string) => `filmbox_order_${c}`;
 
 	let code = $state('');
 	let word = $state('');
@@ -62,9 +66,13 @@
 	let containerEl: HTMLDivElement | undefined = $state();
 
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let realtimeChannel: RealtimeChannel | null = null;
 	let rafId: number | null = null;
 	let lastAdvance = 0;
 	let lastMusicSig: string | undefined;
+	// Order received directly from the upload page via Realtime broadcast.
+	// null = not yet received; we fall back to reading order.txt (for initial/reload).
+	let liveOrder: string[] | null = null;
 
 	async function listExisting() {
 		const supa = getSupabase();
@@ -79,11 +87,11 @@
 		const musicFile = files.find((f) => f.name === MUSIC_FILE);
 		await syncMusic(musicFile);
 
-		const validNames = files.map((f) => f.name).filter((n) => classify(n) !== null);
-		const order = await readOrder();
-		const inOrder = order.filter((n) => validNames.includes(n));
-		const remaining = validNames.filter((n) => !order.includes(n));
-		const ordered = [...inOrder, ...remaining];
+		const validNames = new Set(files.map((f) => f.name).filter((n) => classify(n) !== null));
+		// Use the order received live via broadcast (no network read, no caching issues).
+		// Fall back to reading order.txt only on first load / after a page reload.
+		const order = liveOrder ?? await readOrder();
+		const ordered = order.filter((n) => validNames.has(n));
 
 		const existingByName = new Map(queue.map((q) => [q.name, q]));
 		const newQueue: SlideItem[] = ordered.map((name) => {
@@ -142,7 +150,25 @@
 	}
 
 	function startPolling() {
-		pollTimer = setInterval(listExisting, 3000);
+		pollTimer = setInterval(listExisting, 1000);
+	}
+
+	function startRealtime() {
+		const supa = getSupabase();
+		if (realtimeChannel) void supa.removeChannel(realtimeChannel);
+		realtimeChannel = supa
+			.channel(`room-${code}`)
+			.on('broadcast', { event: 'updated' }, ({ payload }) => {
+				// Store the order from the payload so listExisting() never needs to
+				// fetch order.txt from the network — bypasses all caching entirely.
+				if (Array.isArray(payload?.order)) {
+					liveOrder = payload.order as string[];
+					// Persist so the next host page reload gets the correct order immediately.
+					localStorage.setItem(lsOrderKey(code), JSON.stringify(liveOrder));
+				}
+				void listExisting();
+			})
+			.subscribe();
 	}
 
 	function tick() {
@@ -251,6 +277,8 @@
 
 	function newRoom() {
 		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+		if (code) localStorage.removeItem(lsOrderKey(code));
+		liveOrder = null;
 		queue = [];
 		videoId = undefined;
 		lastMusicSig = undefined;
@@ -260,6 +288,7 @@
 		void uploadHostWord(code, word);
 		listExisting();
 		startPolling();
+		startRealtime();
 	}
 
 	async function recover() {
@@ -281,6 +310,7 @@
 			recovering = false;
 			listExisting();
 			startPolling();
+			startRealtime();
 		} catch {
 			recoverError = 'Room not found';
 		}
@@ -294,8 +324,15 @@
 				if (parsed.code && parsed.word) {
 					code = parsed.code;
 					word = parsed.word;
+					// Restore last-known order so the first render is correct without
+					// needing to read order.txt from the network (which can be stale/cached).
+					try {
+						const saved = localStorage.getItem(lsOrderKey(code));
+						if (saved) liveOrder = JSON.parse(saved) as string[];
+					} catch { /* ignore */ }
 					listExisting();
 					startPolling();
+					startRealtime();
 					return;
 				}
 			} catch { /* ignore */ }
@@ -306,11 +343,13 @@
 		void uploadHostWord(code, word);
 		listExisting();
 		startPolling();
+		startRealtime();
 	});
 
 	onDestroy(() => {
 		if (pollTimer) clearInterval(pollTimer);
 		if (rafId !== null) cancelAnimationFrame(rafId);
+		if (realtimeChannel) void getSupabase().removeChannel(realtimeChannel);
 	});
 
 	$effect(() => {

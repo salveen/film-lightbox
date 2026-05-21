@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
+	import type { RealtimeChannel } from '@supabase/supabase-js';
 	import { isValidCode } from '$lib/roomCode';
 	import { resizeForTV } from '$lib/resizeImage';
 	import { processVideo } from '$lib/processVideo';
@@ -29,10 +31,13 @@
 		return null;
 	}
 
+	const lsOrderKey = (c: string) => `filmbox_order_${c}`;
+
 	let code = $state('');
 	let joined = $state(false);
 	let items = $state<RoomItem[]>([]);
 	let globalError = $state<string | undefined>(undefined);
+	let realtimeChannel: RealtimeChannel | null = null;
 
 	let youtubeInput = $state('');
 	let musicState = $state<MusicState>('idle');
@@ -44,17 +49,23 @@
 		joined = true;
 		void loadCurrentMusic();
 		void loadRoomItems();
+		const supa = getSupabase();
+		if (realtimeChannel) void supa.removeChannel(realtimeChannel);
+		realtimeChannel = supa.channel(`room-${code}`).subscribe();
 	}
+
+	onDestroy(() => {
+		if (realtimeChannel) void getSupabase().removeChannel(realtimeChannel);
+	});
 
 	async function readOrder(): Promise<string[]> {
 		try {
 			const supa = getSupabase();
-			const { data: pub } = supa.storage
+			const { data, error } = await supa.storage
 				.from(SUPABASE_BUCKET)
-				.getPublicUrl(`${roomFolder(code)}/${ORDER_FILE}`);
-			const res = await fetch(`${pub.publicUrl}?t=${Date.now()}`);
-			if (!res.ok) return [];
-			return (await res.text())
+				.download(`${roomFolder(code)}/${ORDER_FILE}`);
+			if (error || !data) return [];
+			return (await data.text())
 				.split('\n')
 				.map((s) => s.trim())
 				.filter(Boolean);
@@ -67,10 +78,17 @@
 		const supa = getSupabase();
 		const path = `${roomFolder(code)}/${ORDER_FILE}`;
 		const names = items.filter((i) => i.storageName).map((i) => i.storageName!);
+		// Broadcast the order directly in the payload so the host never needs to
+		// read order.txt from the network (avoids all CDN/browser caching issues).
+		void realtimeChannel?.send({ type: 'broadcast', event: 'updated', payload: { order: names } });
+		// Persist locally so this page also shows the correct order after a refresh.
+		localStorage.setItem(lsOrderKey(code), JSON.stringify(names));
+		// Also persist to storage as a fallback for host page reloads.
 		const blob = new Blob([names.join('\n')], { type: 'text/plain' });
-		await supa.storage
+		const { error } = await supa.storage
 			.from(SUPABASE_BUCKET)
 			.upload(path, blob, { contentType: 'text/plain', upsert: true });
+		if (error) console.warn('writeOrder file backup failed:', error.message);
 	}
 
 	async function loadRoomItems() {
@@ -83,7 +101,15 @@
 			if (!list) return;
 
 			const validNames = list.map((f) => f.name).filter((n) => classifyExt(n) !== null);
-			const order = await readOrder();
+			// Use localStorage order if available (always fresh) — fall back to network
+			// only on first-ever load before any writeOrder() has run.
+			let order: string[] = [];
+			try {
+				const saved = localStorage.getItem(lsOrderKey(code));
+				order = saved ? (JSON.parse(saved) as string[]) : await readOrder();
+			} catch {
+				order = await readOrder();
+			}
 			const inOrder = order.filter((n) => validNames.includes(n));
 			const remaining = validNames.filter((n) => !order.includes(n));
 			const ordered = [...inOrder, ...remaining];
@@ -112,12 +138,17 @@
 		if (item.storageName) {
 			try {
 				const supa = getSupabase();
-				await supa.storage
+				const { error } = await supa.storage
 					.from(SUPABASE_BUCKET)
 					.remove([`${roomFolder(code)}/${item.storageName}`]);
+				if (error) {
+					// Storage delete failed (e.g. permissions), but we still remove the
+					// photo from order.txt so it disappears from the slideshow immediately.
+					// The file will be cleaned up by the cron job after 24 h.
+					console.warn('Storage delete failed (continuing):', error.message);
+				}
 			} catch (e) {
-				globalError = e instanceof Error ? e.message : String(e);
-				return;
+				console.warn('Storage delete error (continuing):', e);
 			}
 		}
 		items = items.filter((i) => i.id !== id);
